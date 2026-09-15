@@ -1,0 +1,34 @@
+# BSE SENSEX 30 free-float index weights - owner-provided, as of 2026-08-31.
+# Reload on rebalance:
+#   analytical-index-weights load data/sensex_weights.csv --index SENSEX-INDEX --effective-date YYYY-MM-DD
+symbol,name,sector,weight_pct,provider_symbol
+HDFCBANK,HDFC Bank,Financial Services,11.92,NSE_EQ|INE040A01034
+ICICIBANK,ICICI Bank,Financial Services,11.26,NSE_EQ|INE090A01021
+RELIANCE,Reliance Industries,Oil Gas & Consumable Fuels,9.67,NSE_EQ|INE002A01018
+BHARTIARTL,Bharti Airtel,Telecommunication,6.39,NSE_EQ|INE397D01024
+LT,Larsen & Toubro,Construction,5.09,NSE_EQ|INE018A01030
+SBIN,State Bank of India,Financial Services,4.67,NSE_EQ|INE062A01020
+INFY,Infosys,Information Technology,4.43,NSE_EQ|INE009A01021
+AXISBANK,Axis Bank,Financial Services,3.95,NSE_EQ|INE238A01034
+KOTAKBANK,Kotak Mahindra Bank,Financial Services,3.42,NSE_EQ|INE237A01036
+M&M,Mahindra & Mahindra,Automobile and Auto Components,3.18,NSE_EQ|INE101A01026
+BAJFINANCE,Bajaj Finance,Financial Services,3.09,NSE_EQ|INE296A01032
+ITC,ITC,Fast Moving Consumer Goods,2.81,NSE_EQ|INE154A01025
+TCS,Tata Consultancy Services,Information Technology,2.64,NSE_EQ|INE467B01029
+ETERNAL,Eternal,Consumer Services,2.59,NSE_EQ|INE758T01015
+TITAN,Titan Company,Consumer Durables,2.28,NSE_EQ|INE280A01028
+SUNPHARMA,Sun Pharmaceutical Industries,Healthcare,2.23,NSE_EQ|INE044A01036
+HINDUNILVR,Hindustan Unilever,Fast Moving Consumer Goods,1.93,NSE_EQ|INE030A01027
+MARUTI,Maruti Suzuki India,Automobile and Auto Components,1.85,NSE_EQ|INE585B01010
+NTPC,NTPC,Power,1.7,NSE_EQ|INE733E01010
+TATASTEEL,Tata Steel,Metals & Mining,1.66,NSE_EQ|INE081A01020
+BEL,Bharat Electronics,Capital Goods,1.61,NSE_EQ|INE263A01024
+HCLTECH,HCL Technologies,Information Technology,1.56,NSE_EQ|INE860A01027
+ULTRACEMCO,UltraTech Cement,Construction Materials,1.47,NSE_EQ|INE481G01011
+ADANIPORTS,Adani Ports and Special Economic Zone,Services,1.33,NSE_EQ|INE742F01042
+POWERGRID,Power Grid Corporation of India,Power,1.31,NSE_EQ|INE752E01010
+ASIANPAINT,Asian Paints,Consumer Durables,1.27,NSE_EQ|INE021A01026
+INDIGO,InterGlobe Aviation,Services,1.25,NSE_EQ|INE646L01027
+BAJAJFINSV,Bajaj Finserv,Financial Services,1.25,NSE_EQ|INE918I01026
+TECHM,Tech Mahindra,Information Technology,1.14,NSE_EQ|INE669C01036
+TRENT,Trent,Consumer Services,1.04,NSE_EQ|INE849A01020

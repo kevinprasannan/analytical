@@ -1,0 +1,16 @@
+# NIFTY Bank free-float index weights - APPROXIMATE seed, replace with the
+# NSE / niftyindices factsheet:
+#   analytical-index-weights load data/banknifty_weights.csv --index BANKNIFTY-INDEX --effective-date YYYY-MM-DD
+symbol,name,sector,weight_pct,provider_symbol
+HDFCBANK,HDFC Bank,Financial Services,28.8,NSE_EQ|INE040A01034
+ICICIBANK,ICICI Bank,Financial Services,25.6,NSE_EQ|INE090A01021
+SBIN,State Bank of India,Financial Services,9.4,NSE_EQ|INE062A01020
+AXISBANK,Axis Bank,Financial Services,9.1,NSE_EQ|INE238A01034
+KOTAKBANK,Kotak Mahindra Bank,Financial Services,8.3,NSE_EQ|INE237A01036
+FEDERALBNK,Federal Bank,Financial Services,3.1,NSE_EQ|INE171A01029
+BANKBARODA,Bank of Baroda,Financial Services,2.7,NSE_EQ|INE028A01039
+CANBK,Canara Bank,Financial Services,2.6,NSE_EQ|INE476A01022
+PNB,Punjab National Bank,Financial Services,2.5,NSE_EQ|INE160A01022
+INDUSINDBK,IndusInd Bank,Financial Services,2.4,NSE_EQ|INE095A01012
+AUBANK,AU Small Finance Bank,Financial Services,2.3,NSE_EQ|INE949L01017
+IDFCFIRSTB,IDFC First Bank,Financial Services,2.3,NSE_EQ|INE092T01019

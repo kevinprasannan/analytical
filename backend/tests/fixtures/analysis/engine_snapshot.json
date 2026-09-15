@@ -1,0 +1,379 @@
+{
+  "algo_version": "3.5.0",
+  "indicators": {
+    "bollinger": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "bandwidth": 0.179324,
+        "bandwidth_percentile": null,
+        "basis": 112.3237,
+        "lower": 102.2525,
+        "percent_b": 0.578737,
+        "position": "UPPER_HALF",
+        "squeeze": null,
+        "upper": 122.3948
+      },
+      "warnings": []
+    },
+    "candles": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "bars_scanned": 5,
+        "bias": "NEUTRAL",
+        "last_bars_ago": null,
+        "last_bias": null,
+        "last_pattern": null,
+        "last_strength": null,
+        "n_bearish": 0,
+        "n_bullish": 0,
+        "on_last_bar": false,
+        "patterns": []
+      },
+      "warnings": []
+    },
+    "ema7": {
+      "aux": {
+        "atr14": 5.2228,
+        "close_stdev_n": 4.615113
+      },
+      "status": "OK",
+      "values": {
+        "ema": 115.8226,
+        "price_above": false,
+        "price_vs_ema": -1.913,
+        "slope": 0.5116,
+        "slope_state": "RISING"
+      },
+      "warnings": []
+    },
+    "golden_cross": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "bars_since_cross": 11,
+        "cross_ts": "2027-05-02T03:45:00+00:00",
+        "cross_type": "GOLDEN",
+        "fast": 142.8,
+        "provisional": false,
+        "recent": false,
+        "separation": 0.23332,
+        "slow": 115.785,
+        "state": "ABOVE"
+      },
+      "warnings": []
+    },
+    "open_interest": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "behavior": "SHORT_COVERING",
+        "oi": 15580,
+        "oi_change": -70,
+        "oi_direction": "DOWN",
+        "oi_pct_change": -0.004473,
+        "price_change": 1.5,
+        "price_direction": "UP",
+        "price_pct_change": 0.011811,
+        "provider_oi_change": null
+      },
+      "warnings": []
+    },
+    "order_block": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "atr": 5.3785,
+        "bias": "NEUTRAL",
+        "n_active_bearish": 0,
+        "n_active_bullish": 0,
+        "nearest_bearish": null,
+        "nearest_bullish": null,
+        "price": 201.6,
+        "zone_state": "OUTSIDE",
+        "zones": []
+      },
+      "warnings": []
+    },
+    "rsi": {
+      "aux": {},
+      "status": "OK",
+      "values": {
+        "divergence": "NONE",
+        "rsi": 55.03,
+        "slope": -5.83,
+        "state": "NEUTRAL"
+      },
+      "warnings": []
+    },
+    "rsi_insufficient": {
+      "aux": {},
+      "status": "INSUFFICIENT_DATA",
+      "values": {
+        "reason": "need >= 15 bars, have 3"
+      },
+      "warnings": []
+    },
+    "volume": {
+      "aux": {
+        "price_change_pct_recent": 0.080719
+      },
+      "status": "OK",
+      "values": {
+        "rvol": 0.931966,
+        "spike": false,
+        "trend": "FLAT",
+        "up_down_ratio": 0.818182,
+        "up_down_state": "MORE_DOWN",
+        "vol_ma": 536.5,
+        "volume": 500
+      },
+      "warnings": []
+    }
+  },
+  "market_profile": {
+    "params": {
+      "bin_pct": 0.00025,
+      "dd_peak_pct": 0.12,
+      "dd_valley_pct": 0.04,
+      "default_increment": 5.0,
+      "ib_periods": 2,
+      "increment_by_underlying": {
+        "BANKNIFTY": 10.0,
+        "NIFTY": 5.0
+      },
+      "min_bins": 10,
+      "min_periods_for_result": 3,
+      "option_bin_pct": 0.01,
+      "p_b_poc_pos": 0.6,
+      "partial_period_policy": "KEEP",
+      "source_timeframe": "M5",
+      "tail_pct": 0.15,
+      "tpo_minutes": 30,
+      "trend_poc_pos": 0.66,
+      "trend_va_width_max": 0.5,
+      "va_expansion": "PAIR",
+      "value_area_pct": 0.7,
+      "vp_distribution": "UNIFORM"
+    },
+    "profiles": {
+      "TPO": {
+        "bin_size": 5.0,
+        "close": 24002.1116,
+        "close_in_value_area": false,
+        "close_vs_poc": "BELOW",
+        "close_vs_vah": "BELOW",
+        "close_vs_val": "BELOW",
+        "ib_complete": true,
+        "ib_high": 24017.3542,
+        "ib_low": 24000.1663,
+        "is_session_complete": true,
+        "n_periods_elapsed": 13,
+        "n_periods_total": 13,
+        "poc": 24035.0,
+        "profile_shape": "NORMAL",
+        "profile_type": "TPO",
+        "range": 151.2137,
+        "session_date": "2026-08-27",
+        "session_end_ts": "2026-08-27T10:00:00+00:00",
+        "session_high": 24151.38,
+        "session_low": 24000.1663,
+        "session_start_ts": "2026-08-27T03:45:00+00:00",
+        "vah": 24115.0,
+        "val": 24005.0,
+        "value_area_pct": 0.7
+      },
+      "VOLUME": {
+        "bin_size": 5.0,
+        "close": 24002.1116,
+        "close_in_value_area": true,
+        "close_vs_poc": "AT",
+        "close_vs_vah": "BELOW",
+        "close_vs_val": "AT",
+        "ib_complete": true,
+        "ib_high": 24017.3542,
+        "ib_low": 24000.1663,
+        "is_session_complete": true,
+        "n_periods_elapsed": 13,
+        "n_periods_total": 13,
+        "poc": 24000.0,
+        "profile_shape": "NORMAL",
+        "profile_type": "VOLUME",
+        "range": 151.2137,
+        "session_date": "2026-08-27",
+        "session_end_ts": "2026-08-27T10:00:00+00:00",
+        "session_high": 24151.38,
+        "session_low": 24000.1663,
+        "session_start_ts": "2026-08-27T03:45:00+00:00",
+        "vah": 24100.0,
+        "val": 24000.0,
+        "value_area_pct": 0.7
+      }
+    },
+    "reason": null,
+    "status": "OK"
+  },
+  "options": {
+    "chain": {
+      "atm": 24000.0,
+      "dte": 33,
+      "max_pain": 24000.0,
+      "pcr_oi": 0.9123,
+      "rows": [
+        {
+          "ce": [
+            0.139358,
+            0.64087,
+            -8.311435
+          ],
+          "pe": [
+            0.159623,
+            -0.374217,
+            -4.938843
+          ],
+          "strike": 23800.0
+        },
+        {
+          "ce": [
+            0.139375,
+            0.602958,
+            -8.33972
+          ],
+          "pe": [
+            0.159631,
+            -0.407643,
+            -4.950149
+          ],
+          "strike": 23900.0
+        },
+        {
+          "ce": [
+            0.13939,
+            0.56422,
+            -8.309102
+          ],
+          "pe": [
+            0.15964,
+            -0.441609,
+            -4.909874
+          ],
+          "strike": 24000.0
+        },
+        {
+          "ce": [
+            0.139403,
+            0.52503,
+            -8.218276
+          ],
+          "pe": [
+            0.15965,
+            -0.475863,
+            -4.81722
+          ],
+          "strike": 24100.0
+        },
+        {
+          "ce": [
+            0.139415,
+            0.485765,
+            -8.067701
+          ],
+          "pe": [
+            0.159661,
+            -0.51015,
+            -4.672549
+          ],
+          "strike": 24200.0
+        }
+      ]
+    },
+    "sample_call_greeks": [
+      0.5241841262271205,
+      0.00036787312605223837,
+      -8.690800452420822,
+      28.736434438360057,
+      10.965101021874872
+    ],
+    "sample_call_price": 452.3527476801992
+  },
+  "scoring": {
+    "composite_score": 9.668271,
+    "confidence": 0.39,
+    "denom": 3.0225,
+    "effective_label": "NEUTRAL",
+    "explanation": "NEUTRAL (9.7, confidence 0.39). Bollinger upper half. OI: short covering (OI -0.4%, price +1.2%). RSI 55 \u2014 neutral. Price below the 7-EMA with a rising slope. Volume 0.9x average. Order blocks \u2014 neutral; 0 bullish / 0 bearish blocks in play. Candles \u2014 no major pattern in the recent bars.",
+    "factors": [
+      {
+        "analysis_key": "bollinger",
+        "confidence": 0.56,
+        "contribution": 5.215454,
+        "reason": "Bollinger upper half",
+        "sub_score": 28.14948,
+        "weight": 1.0
+      },
+      {
+        "analysis_key": "open_interest",
+        "confidence": 0.75,
+        "contribution": 2.427962,
+        "reason": "OI: short covering (OI -0.4%, price +1.2%)",
+        "sub_score": 7.82775,
+        "weight": 1.25
+      },
+      {
+        "analysis_key": "rsi",
+        "confidence": 0.5,
+        "contribution": 1.664185,
+        "reason": "RSI 55 \u2014 neutral",
+        "sub_score": 10.06,
+        "weight": 1.0
+      },
+      {
+        "analysis_key": "ema7",
+        "confidence": 0.5,
+        "contribution": 0.36067,
+        "reason": "Price below the 7-EMA with a rising slope",
+        "sub_score": 2.180248,
+        "weight": 1.0
+      },
+      {
+        "analysis_key": "volume",
+        "confidence": 0.7,
+        "contribution": 0.0,
+        "reason": "Volume 0.9x average",
+        "sub_score": 0.0,
+        "weight": 0.75
+      },
+      {
+        "analysis_key": "order_block",
+        "confidence": 0.0,
+        "contribution": 0.0,
+        "reason": "Order blocks \u2014 neutral; 0 bullish / 0 bearish blocks in play",
+        "sub_score": 0.0,
+        "weight": 1.0
+      },
+      {
+        "analysis_key": "candles",
+        "confidence": 0.0,
+        "contribution": 0.0,
+        "reason": "Candles \u2014 no major pattern in the recent bars",
+        "sub_score": 0.0,
+        "weight": 0.75
+      }
+    ],
+    "low_confidence": false,
+    "raw_label": "NEUTRAL",
+    "weights": {
+      "bollinger": 1.0,
+      "candles": 0.75,
+      "ema7": 1.0,
+      "golden_cross": 1.5,
+      "market_profile": 1.0,
+      "open_interest": 1.25,
+      "order_block": 1.0,
+      "rsi": 1.0,
+      "volume": 0.75
+    }
+  },
+  "scoring_version": "1.2.0"
+}

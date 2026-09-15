@@ -1,0 +1,93 @@
+"""Option pricing + chain assembly (docs/05 §11). Pure, deterministic."""
+
+from __future__ import annotations
+
+from analytical_core.options.black_scholes import Greeks, bs_greeks, bs_price
+from analytical_core.options.chain import (
+    ChainLeg,
+    ChainRow,
+    CrowdedRead,
+    LegInput,
+    OptionChain,
+    build_chain,
+    crowded_read,
+    max_pain,
+)
+from analytical_core.options.decay import (
+    DECAY_VERSION,
+    DecayConfig,
+    DecayLeg,
+    DecayLegInput,
+    DecayRow,
+    DecayState,
+    PremiumDecay,
+    build_premium_decay,
+    premium_decay_to_dict,
+)
+from analytical_core.options.iv import implied_vol
+from analytical_core.options.oi_pulse import (
+    OI_PULSE_VERSION,
+    OiLegSeries,
+    OiPulse,
+    OiPulseConfig,
+    OiPulseLeg,
+    OiPulseRow,
+    OiTracePoint,
+    build_oi_pulse,
+    oi_pulse_to_dict,
+)
+from analytical_core.options.strategy import (
+    DISCLAIMER,
+    VIEWS,
+    MarketView,
+    StrategyBook,
+    StrategyConfig,
+    StrategyLeg,
+    StrategySuggestion,
+    StrikeQuote,
+    build_strategy_book,
+    strategy_book_to_dict,
+)
+
+__all__ = [
+    "Greeks",
+    "bs_greeks",
+    "bs_price",
+    "implied_vol",
+    "LegInput",
+    "ChainLeg",
+    "ChainRow",
+    "CrowdedRead",
+    "OptionChain",
+    "build_chain",
+    "crowded_read",
+    "max_pain",
+    "DECAY_VERSION",
+    "DecayConfig",
+    "DecayLeg",
+    "DecayLegInput",
+    "DecayRow",
+    "DecayState",
+    "PremiumDecay",
+    "build_premium_decay",
+    "premium_decay_to_dict",
+    "OI_PULSE_VERSION",
+    "OiLegSeries",
+    "OiPulse",
+    "OiPulseConfig",
+    "OiPulseLeg",
+    "OiPulseRow",
+    "OiTracePoint",
+    "build_oi_pulse",
+    "oi_pulse_to_dict",
+    "DISCLAIMER",
+    "VIEWS",
+    "MarketView",
+    "StrategyBook",
+    "StrategyConfig",
+    "StrategyLeg",
+    "StrategySuggestion",
+    "StrikeQuote",
+    "build_strategy_book",
+    "strategy_book_to_dict",
+]

@@ -1,0 +1,241 @@
+# Provider Validation Status — machine-readable source of truth for the Phase 2 gate.
+#
+# Human narrative:  docs/11-PROVIDER-VALIDATION.md   (its §1 table mirrors this file;
+#                   §4 records the Phase 1.5 evidence per row, dated 2026-08-27)
+# This file is authoritative. It is read by:
+#   1. CI job `provider-validation-gate`  (docs/09 §4, §2.12)
+#   2. the Upstox adapter startup guard   (app/providers/upstox/gate.py, docs/02 §3.2)
+#   3. the `analytical-gate` CLI           (app/providers/validation/gate.py)
+# Nothing here is ever modified by tooling — statuses are changed by hand only,
+# and only after evidence has been collected (see docs/11 §4).
+#
+# STATUS VOCABULARY (contract-controlled — exactly these three strings):
+#   OPEN              - not yet validated; blocks Phase 2 (for PV-1..PV-7).
+#   CONFIRMED         - verified against Upstox docs/sandbox/first-hand artifact;
+#                       `evidence` REQUIRED (each entry: "<text> — YYYY-MM-DD").
+#   ACCEPTED_FALLBACK - documented fallback accepted; `fallback_ref` REQUIRED
+#                       (a heading/anchor in docs/11-PROVIDER-VALIDATION.md).
+#
+# PER-ITEM FIELDS:
+#   id             - "PV-N" (must equal the key).
+#   title          - short label; matches the docs/11 §1 table "Item" cell.
+#   requirement    - what must be confirmed.
+#   status         - one of the vocabulary strings above.
+#   evidence       - list of "<text> — YYYY-MM-DD" strings, or null.
+#   fallback_ref   - anchor into docs/11-PROVIDER-VALIDATION.md, or null unless
+#                    status is ACCEPTED_FALLBACK.
+#   impact         - what this requirement blocks / affects.
+#   notes          - free text or null.
+#   blocks_phase_2 - true for PV-1..PV-7, false for PV-8.
+#   branch         - PV-2 / PV-4 only: the design branch chosen on resolution.
+#   decided_on     - ISO date the status was last changed; null while OPEN.
+
+meta:
+  schema_version: 1
+  last_updated: "2026-08-27"
+  owner: "kevin.prasannan@gmail.com"
+  gate_blocking_ids: [PV-1, PV-2, PV-3, PV-4, PV-5, PV-6, PV-7]
+
+items:
+  PV-1:
+    id: PV-1
+    title: "Authentication & access-token lifecycle"
+    requirement: >-
+      OAuth flow type; access-token TTL; whether an unattended refresh is
+      possible; the error shape on expiry.
+    status: ACCEPTED_FALLBACK
+    evidence:
+      - "Upstox Get Token API — access_token 'validity period that lasts until 3:30 AM the following day, regardless of the time it was generated'; response fields listed with NO refresh_token; an 'extended_token' exists ('prolonged usage, primarily read-only') with no documented validity/eligibility: https://upstox.com/developer/api-documentation/get-token/ — 2026-08-27"
+      - "Upstox Access Token Request (notifier) flow still requires human approval each time — not fully unattended: https://upstox.com/developer/api-documentation/access-token-request/ — 2026-08-27"
+      - "Upstox staff (community): 'As per SEBI guidelines, you are required to log in to your account daily. Thus you will need to generate a new access token each day': https://community.upstox.com/t/permanent-access-token-for-the-market-data-feed-api/7643 — 2026-08-27"
+    fallback_ref: "docs/11 §2 · PV-1 — Authentication & access-token lifecycle · Accepted fallback (daily-manual-token)"
+    impact: "C2, unattended operation, provider_credentials, scheduler auth handling"
+    notes: >-
+      Fixed daily expiry at 03:30 IST; no refresh_token; notifier flow needs
+      human approval; SEBI-mandated daily login. No unattended renewal exists.
+      Daily-manual-token fallback applies (already implemented in Phase 1:
+      provider_auth_state=EXPIRED -> instruments SKIPPED, no crash; runtime token
+      entry). Phase 2 should evaluate `extended_token` as a possible unattended
+      read-only path — the auth seam already supports runtime token replacement,
+      so no spec change is needed if it proves viable.
+    blocks_phase_2: true
+    branch: null
+    decided_on: "2026-08-27"
+
+  PV-2:
+    id: PV-2
+    title: "Native candle intervals (1m / 5m / 15m / 60m / day)"
+    requirement: >-
+      Which intervals the historical and intraday endpoints serve directly, and
+      whether interval boundaries are exchange-session-anchored or wall-clock.
+    status: ACCEPTED_FALLBACK
+    evidence:
+      - "Upstox v3 Historical Candle Data API — unit=minutes interval 1..300, unit=hours interval 1..5, unit=days interval 1; timestamps ISO 8601 with +05:30 offset, candle START time: https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/ — 2026-08-27"
+      - "Upstox v3 Intraday Candle Data API — same units/intervals; current trading day only; real 15-min candle start timestamps 2025-01-12T14:45:00+05:30 and 2025-01-12T15:15:00+05:30: https://upstox.com/developer/api-documentation/v3/get-intra-day-candle-data/ — 2026-08-27"
+      - "No official statement or sample response establishes whether 60-minute candles for NSE are anchored to the 09:15 session open or to wall-clock hours; docs/05 §3.3 requires session-anchored H1 — 2026-08-27"
+    fallback_ref: "docs/11 §2 · PV-2 — Native candle intervals · Accepted fallback (branch: AGGREGATE_FROM_M1)"
+    impact: "H3, ingestion aggregation need, Market Profile source timeframe"
+    notes: >-
+      1-minute candles are confirmed native (from January 2022). M5/M15 sit on a
+      grid that includes 09:15 so wall-clock == session-anchored for those; H1
+      anchoring is undocumented and unverifiable without an authenticated test.
+      To guarantee session-anchored M5/M15/H1 deterministically, ingest M1 and
+      aggregate locally to the NSE session grid (app/ingestion/aggregation.py,
+      docs/05 §3.3/§3.5). D1 stays native (unit=days). M1 rows persisted, 10-day
+      retention (docs/03 §6).
+    blocks_phase_2: true
+    branch: AGGREGATE_FROM_M1
+    decided_on: "2026-08-27"
+
+  PV-3:
+    id: PV-3
+    title: "Historical depth per interval"
+    requirement: >-
+      Max lookback for daily candles (>= 250 trading days for a 200-SMA) and for
+      intraday intervals; per-request row caps / pagination.
+    status: CONFIRMED
+    evidence:
+      - "Upstox v3 Historical Candle Data API — days: available from January 2000, 1 decade per request; minutes 1-15: from January 2022, 1 month per request; minutes >15 and hours: from January 2022, 1 quarter per request; over-limit requests return an error: https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/ — 2026-08-27"
+      - "Upstox Expired Historical Candle Data API — expired dated-contract history (incl. OI) exists via /expired-instruments/historical-candle/... but requires an 'Upstox Plus plan subscription'; not required for V1 (dated-contract long-lookback analyses are NOT_APPLICABLE by design; backtesting is future work): https://upstox.com/developer/api-documentation/get-expired-historical-candle-data/ — 2026-08-27"
+    fallback_ref: null
+    impact: "H1 (index 200-SMA / Golden Cross), backfill scope, retention"
+    notes: >-
+      Daily depth (Jan 2000) vastly exceeds the >=250-trading-day requirement for
+      the INDEX 200-SMA Golden Cross — the PV-3 fallback (one-time daily import
+      file) is NOT triggered. Intraday depth ~4.5 years, paginated: ingestion
+      backfill must page <=1 month per request for M1 and <=1 quarter for
+      hours/>15min (docs/02 §3.4, docs/10 Phase 2). Retention (M1 10d, M5 180d,
+      M15/H1 400d) is well within provider depth.
+    blocks_phase_2: true
+    branch: null
+    decided_on: "2026-08-27"
+
+  PV-4:
+    id: PV-4
+    title: "Intraday Open Interest availability & granularity"
+    requirement: >-
+      Whether OI is available per historical intraday candle, only as a live
+      snapshot, or only end-of-day; latency; reconstructability.
+    status: CONFIRMED
+    evidence:
+      - "Upstox v3 Historical Candle Data API — candle response is a 7-element array; element 7 = Open Interest ('total number of outstanding derivative contracts'), returned at every supported interval (1..300 min, hours, days): https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/ — 2026-08-27"
+      - "Upstox v3 Intraday Candle Data API — identical 7-element candle array including Open Interest as element 7: https://upstox.com/developer/api-documentation/v3/get-intra-day-candle-data/ — 2026-08-27"
+      - "Upstox Expired Historical Candle Data API — candle array also includes Open Interest: https://upstox.com/developer/api-documentation/get-expired-historical-candle-data/ — 2026-08-27"
+    fallback_ref: null
+    impact: "C3, open_interest vs oi_snapshots model, OI analysis scope (SNAPSHOT vs PER_TIMEFRAME), OI scoring factor"
+    notes: >-
+      Per-candle historical + intraday OI is part of the documented response
+      contract on three official pages -> Branch A (A_PER_CANDLE) adopted,
+      changing the previous B_SNAPSHOT default. OI is ingested from the SAME
+      candle response as OHLCV, analysis_scope = PER_TIMEFRAME, `open_interest`
+      table active, `oi_snapshots` reserved/unused in V1, change_lookback in
+      periods. Under AGGREGATE_FROM_M1, per-M1 OI aggregates as last-value-in-
+      period (OI is a level; docs/05 §3.5). PHASE-2 ENTRY CHECKPOINT: the first
+      authenticated smoke test must confirm element 7 is actually populated
+      (non-null, plausible) for a live NSE F&O intraday minute candle; if not,
+      flip to the pre-designed B_SNAPSHOT branch (config-only: oi_mode=SNAPSHOT,
+      has_intraday_oi=false — both tables already exist, no migration).
+    blocks_phase_2: true
+    branch: A_PER_CANDLE
+    decided_on: "2026-08-27"
+
+  PV-5:
+    id: PV-5
+    title: "Rate limits & quotas"
+    requirement: >-
+      Requests/second, requests/minute, daily caps; per-endpoint differences;
+      throttle response; whether the instrument master is one bulk download.
+    status: CONFIRMED
+    evidence:
+      - "Upstox API Rate Limits — 'Other Standard APIs' (Historical + Intraday Candle Data fall here): 50 req/sec, 500 req/min, 2000 req/30min; enforced per-API per-user; no daily quota documented; 'Exceeding these limits might result in temporary suspension of access': https://upstox.com/developer/api-documentation/rate-limiting/ — 2026-08-27"
+      - "Instrument master is a single public gzipped-JSON bulk download, no auth (see PV-6) — 2026-08-27"
+    fallback_ref: null
+    impact: "M24 throughput budget, bounded concurrency limits, cycle cadence feasibility"
+    notes: >-
+      Peak defaults PROVIDER_CONCURRENCY=4 and <=10 req/s are within the 50 req/s
+      limit. The binding constraint is 2000 req/30min (~1.1 req/s sustained) and
+      500 req/min (~8.3 req/s sustained). Required config (docs/02 §6.7): keep
+      PROVIDER_CONCURRENCY=4; add PROVIDER_MAX_RPS=8 and a rolling
+      PROVIDER_30MIN_BUDGET=1800 (10% headroom under 2000); exponential backoff
+      on throttle (exact HTTP status — expected 429 — to confirm on first
+      authenticated call); watermark RATE_LIMITED + instrument DEGRADED (already
+      designed). Cycle-budget rule: requests_per_cycle * (1800 /
+      cycle_interval_seconds) <= PROVIDER_30MIN_BUDGET. At ~94 instruments and
+      cycle_interval_seconds=180 that is ~940/30min — comfortably under 1800, so
+      the confirmed Phase-0 cadence and universe size are compatible.
+    blocks_phase_2: true
+    branch: null
+    decided_on: "2026-08-27"
+
+  PV-6:
+    id: PV-6
+    title: "Instrument master format & fields"
+    requirement: >-
+      Format and refresh cadence; fields present (token, lot_size, tick_size,
+      expiry, weekly-vs-monthly distinguishability, strike, option_type,
+      trading status); how expired contracts are represented.
+    status: CONFIRMED
+    evidence:
+      - "First-hand download of the public Upstox NSE instrument master — HTTP 200, Content-Type application/gzip, Last-Modified refreshed daily ~00:01 UTC, no auth, 1.88 MB, 75,294 NSE rows: https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz — 2026-08-27"
+      - "Observed per-record fields: instrument_key, exchange_token, trading_symbol, name, exchange, segment (NSE_EQ/NSE_FO/NSE_INDEX/...), instrument_type (INDEX/FUT/CE/PE/EQ/...), lot_size, minimum_lot, tick_size, freeze_quantity, qty_multiplier, strike_price, expiry (epoch milliseconds), weekly (boolean), underlying_symbol, underlying_key (e.g. 'NSE_INDEX|Nifty 50'), asset_symbol, asset_key, asset_type/underlying_type (INDEX), isin (EQ only), last_trading_date (null on observed F&O rows) — 2026-08-27"
+      - "Verified against live data: NIFTY 50 = instrument_key 'NSE_INDEX|Nifty 50' symbol NIFTY; Nifty Bank = 'NSE_INDEX|Nifty Bank' symbol BANKNIFTY; NIFTY futures = 3 serial monthly contracts weekly=false lot_size 65; BANKNIFTY futures = 3 serial monthly lot_size 30; NIFTY options have 4 weekly (weekly=true) expiries + monthly/quarterly/far; BANKNIFTY options have ZERO weekly expiries (all weekly=false, monthly only); NIFTY option strike step = uniform 50; BANKNIFTY option strike step ~100 near ATM (wider at wings); expired contracts are dropped from the file (only forward contracts present) — 2026-08-27"
+    fallback_ref: null
+    impact: "Instrument registry, M3 (expiry kind), M4 (strike step), H6 (expiry policy)"
+    notes: >-
+      All registry fields present. Weekly vs monthly is DIRECTLY distinguishable
+      via the `weekly` boolean -> expiry_kind primary rule = the `weekly` flag
+      (true->WEEKLY; false->MONTHLY, or QUARTERLY for quarter-end far contracts);
+      the docs/11 'last-expiry-of-month' heuristic drops to a secondary tiebreak.
+      docs/11 warning 'do not assume BANKNIFTY weekly options' is CONFIRMED true
+      against live data. No `strike_step` field -> use the per-underlying
+      app_settings config (NIFTY=50, BANKNIFTY=100, per M4), optionally refined
+      by the observed near-ATM modal gap. contract_key = platform-stable identity
+      from underlying_symbol + expiry_date + strike + option_type;
+      provider_instrument_map.provider_symbol = the volatile instrument_key
+      ('NSE_FO|<exchange_token>'). expiry epoch-ms normalised to a date in IST.
+      underlying_id resolved via underlying_key.
+    blocks_phase_2: true
+    branch: null
+    decided_on: "2026-08-27"
+
+  PV-7:
+    id: PV-7
+    title: "Candle timestamp semantics & response timezone"
+    requirement: >-
+      Whether candle timestamps are bar-open or bar-close, and the timezone /
+      encoding of returned timestamps.
+    status: CONFIRMED
+    evidence:
+      - "Upstox v3 Historical Candle Data API — 'Timestamps are ISO 8601 with timezone offset, example: 2025-01-01T00:00:00+05:30' and 'They represent the candle start time (opening of the timeframe)': https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/ — 2026-08-27"
+      - "Upstox v3 Intraday Candle Data API — real 15-minute candle START timestamps 2025-01-12T14:45:00+05:30 and 2025-01-12T15:15:00+05:30 (IST +05:30 offset; 15:15 start = the 15:15-15:30 NSE closing slot): https://upstox.com/developer/api-documentation/v3/get-intra-day-candle-data/ — 2026-08-27"
+    fallback_ref: null
+    impact: "H2 / H11 normalization (bar-open UTC convention)"
+    notes: >-
+      Timestamps are bar-OPEN with an IST (+05:30) offset. Normalization is a
+      deterministic tz conversion (fromisoformat -> astimezone(UTC)); NO
+      bar-close->bar-open interval subtraction is needed (the PV-7 fallback's
+      contingency does not apply). Because the platform uses AGGREGATE_FROM_M1
+      it re-derives M5/M15/H1 bar-open timestamps on the NSE session grid, so
+      provider H1 anchoring is moot. docs/09 §2.4 normalization test must pin an
+      actual authenticated intraday sample (first candle 09:15:00+05:30 ->
+      03:45:00Z) as a Phase-2 acceptance check.
+    blocks_phase_2: true
+    branch: null
+    decided_on: "2026-08-27"
+
+  PV-8:
+    id: PV-8
+    title: "Corporate actions / index constituents"
+    requirement: >-
+      Availability of corporate-action data and index constituent history.
+      Not required for the index/derivative V1 — recorded so it is not silently
+      assumed away when equities are added.
+    status: ACCEPTED_FALLBACK
+    evidence:
+      - "docs/01 §5.1 — V1 instrument universe is NSE index + index futures/options only (no equities cash). Corporate actions (splits/bonus/dividends) affect equity price-series continuity, not index levels or index-derivative analysis; index constituents matter only for reconstructing an index from members, which V1 does not do (it consumes the index level directly) — 2026-08-27"
+    fallback_ref: "docs/11 §2 · PV-8 — Corporate actions / index constituents (not required for the V1 index/derivative universe; deferred to equities work)"
+    impact: "Future equities work only"
+    notes: "Non-blocking (blocks_phase_2 = false). Deferred to when equities are added."
+    blocks_phase_2: false
+    branch: null
+    decided_on: "2026-08-27"

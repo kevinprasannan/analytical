@@ -1,0 +1,56 @@
+# NIFTY 50 free-float index weights — owner-provided, as of 2026-08-31.
+# Reload on each semi-annual rebalance:
+#   analytical-index-weights load data/nifty50_weights.csv --effective-date YYYY-MM-DD
+# provider_symbol is optional — fill it (e.g. Upstox `NSE_EQ|<ISIN>`) to enable
+# quote-on-read contribution / breadth / beta; the weight view needs none of it.
+symbol,name,sector,weight_pct,provider_symbol
+HDFCBANK,HDFC Bank,Financial Services,9.89,NSE_EQ|INE040A01034
+ICICIBANK,ICICI Bank,Financial Services,9.35,NSE_EQ|INE090A01021
+RELIANCE,Reliance Industries,Oil Gas & Consumable Fuels,8.02,NSE_EQ|INE002A01018
+BHARTIARTL,Bharti Airtel,Telecommunication,5.30,NSE_EQ|INE397D01024
+LT,Larsen & Toubro,Construction,4.23,NSE_EQ|INE018A01030
+SBIN,State Bank of India,Financial Services,3.88,NSE_EQ|INE062A01020
+INFY,Infosys,Information Technology,3.68,NSE_EQ|INE009A01021
+AXISBANK,Axis Bank,Financial Services,3.28,NSE_EQ|INE238A01034
+KOTAKBANK,Kotak Mahindra Bank,Financial Services,2.84,NSE_EQ|INE237A01036
+M&M,Mahindra & Mahindra,Automobile and Auto Components,2.64,NSE_EQ|INE101A01026
+BAJFINANCE,Bajaj Finance,Financial Services,2.56,NSE_EQ|INE296A01032
+ITC,ITC,Fast Moving Consumer Goods,2.33,NSE_EQ|INE154A01025
+TCS,Tata Consultancy Services,Information Technology,2.19,NSE_EQ|INE467B01029
+ETERNAL,Eternal,Consumer Services,2.15,NSE_EQ|INE758T01015
+TITAN,Titan Company,Consumer Durables,1.89,NSE_EQ|INE280A01028
+SUNPHARMA,Sun Pharmaceutical Industries,Healthcare,1.85,NSE_EQ|INE044A01036
+HINDUNILVR,Hindustan Unilever,Fast Moving Consumer Goods,1.61,NSE_EQ|INE030A01027
+MARUTI,Maruti Suzuki India,Automobile and Auto Components,1.53,NSE_EQ|INE585B01010
+NTPC,NTPC,Power,1.41,NSE_EQ|INE733E01010
+TATASTEEL,Tata Steel,Metals & Mining,1.38,NSE_EQ|INE081A01020
+SHRIRAMFIN,Shriram Finance,Financial Services,1.35,NSE_EQ|INE721A01047
+BEL,Bharat Electronics,Capital Goods,1.34,NSE_EQ|INE263A01024
+HINDALCO,Hindalco Industries,Metals & Mining,1.33,NSE_EQ|INE038A01020
+HCLTECH,HCL Technologies,Information Technology,1.29,NSE_EQ|INE860A01027
+ULTRACEMCO,UltraTech Cement,Construction Materials,1.22,NSE_EQ|INE481G01011
+BAJAJ-AUTO,Bajaj Auto,Automobile and Auto Components,1.22,NSE_EQ|INE917I01010
+GRASIM,Grasim Industries,Construction Materials,1.13,NSE_EQ|INE047A01021
+JSWSTEEL,JSW Steel,Metals & Mining,1.12,NSE_EQ|INE019A01038
+ADANIPORTS,Adani Ports and Special Economic Zone,Services,1.10,NSE_EQ|INE742F01042
+POWERGRID,Power Grid Corporation of India,Power,1.09,NSE_EQ|INE752E01010
+ASIANPAINT,Asian Paints,Consumer Durables,1.06,NSE_EQ|INE021A01026
+INDIGO,InterGlobe Aviation,Services,1.04,NSE_EQ|INE646L01027
+BAJAJFINSV,Bajaj Finserv,Financial Services,1.04,NSE_EQ|INE918I01026
+EICHERMOT,Eicher Motors,Automobile and Auto Components,1.00,NSE_EQ|INE066A01021
+TECHM,Tech Mahindra,Information Technology,0.94,NSE_EQ|INE669C01036
+NESTLEIND,Nestle India,Fast Moving Consumer Goods,0.94,NSE_EQ|INE239A01024
+COALINDIA,Coal India,Oil Gas & Consumable Fuels,0.87,NSE_EQ|INE522F01014
+TRENT,Trent,Consumer Services,0.86,NSE_EQ|INE849A01020
+ONGC,Oil & Natural Gas Corporation,Oil Gas & Consumable Fuels,0.83,NSE_EQ|INE213A01029
+APOLLOHOSP,Apollo Hospitals Enterprise,Healthcare,0.82,NSE_EQ|INE437A01024
+ADANIENT,Adani Enterprises,Metals & Mining,0.78,NSE_EQ|INE423A01024
+CIPLA,Cipla,Healthcare,0.73,NSE_EQ|INE059A01026
+SBILIFE,SBI Life Insurance Company,Financial Services,0.71,NSE_EQ|INE123W01016
+JIOFIN,Jio Financial Services,Financial Services,0.70,NSE_EQ|INE758E01017
+MAXHEALTH,Max Healthcare Institute,Healthcare,0.68,NSE_EQ|INE027H01010
+DRREDDY,Dr. Reddy's Laboratories,Healthcare,0.65,NSE_EQ|INE089A01031
+TATACONSUM,Tata Consumer Products,Fast Moving Consumer Goods,0.61,NSE_EQ|INE192A01025
+TMPV,Tata Motors Passenger Vehicles,Automobile and Auto Components,0.59,NSE_EQ|INE155A01022
+HDFCLIFE,HDFC Life Insurance Company,Financial Services,0.53,NSE_EQ|INE795G01014
+WIPRO,Wipro,Information Technology,0.45,NSE_EQ|INE075A01022

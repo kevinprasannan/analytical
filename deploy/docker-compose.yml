@@ -1,0 +1,125 @@
+# Analytical — full stack: db + backend (API) + frontend, plus an optional
+# worker service (scheduler loop). Analytical decision-support only — no
+# execution components.
+#
+#   cp deploy/.env.example deploy/.env      # then edit
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml --profile worker up -d     # + scheduler
+#   docker compose -f deploy/docker-compose.yml --profile streamer up -d   # + WS streamer
+#
+# All ports bind to 127.0.0.1 only.
+name: analytical
+
+x-backend-env: &backend-env
+  ANALYTICAL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-analytical}:${POSTGRES_PASSWORD:-analytical}@db:5432/${POSTGRES_DB:-analytical}
+  ANALYTICAL_ACTIVE_PROVIDER: ${ANALYTICAL_ACTIVE_PROVIDER:-stub}
+  ANALYTICAL_LOG_JSON: ${ANALYTICAL_LOG_JSON:-true}
+  ANALYTICAL_LOG_LEVEL: ${ANALYTICAL_LOG_LEVEL:-INFO}
+  ANALYTICAL_CYCLE_INTERVAL_SECONDS: ${ANALYTICAL_CYCLE_INTERVAL_SECONDS:-180}
+  ANALYTICAL_SCHEDULER_SESSION_ONLY: ${ANALYTICAL_SCHEDULER_SESSION_ONLY:-true}
+  ANALYTICAL_UPSTOX_ACCESS_TOKEN: ${ANALYTICAL_UPSTOX_ACCESS_TOKEN:-}
+  ANALYTICAL_LOCAL_API_TOKEN: ${ANALYTICAL_LOCAL_API_TOKEN:-}
+  ANALYTICAL_STREAM_ENABLED: ${ANALYTICAL_STREAM_ENABLED:-false}
+  ANALYTICAL_STREAM_MODE: ${ANALYTICAL_STREAM_MODE:-full}
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-analytical}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analytical}
+      POSTGRES_DB: ${POSTGRES_DB:-analytical}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analytical} -d ${POSTGRES_DB:-analytical}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    environment:
+      <<: *backend-env
+      # In-process scheduler off by default; the `worker` service owns the loop.
+      ANALYTICAL_RUN_WORKER_IN_PROCESS: ${ANALYTICAL_RUN_WORKER_IN_PROCESS:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m app.db.seed &&
+             uvicorn app.api.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  # Optional: the periodic execution-cycle scheduler. Enable with
+  #   docker compose --profile worker up -d
+  # Leave disabled and set ANALYTICAL_RUN_WORKER_IN_PROCESS=true to run it inside
+  # the backend process instead.
+  worker:
+    profiles: ["worker"]
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    environment:
+      <<: *backend-env
+      ANALYTICAL_RUN_WORKER_IN_PROCESS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    command: ["analytical-worker", "serve"]
+    restart: unless-stopped
+
+  # Optional: the Upstox Market Data Feed v3 WebSocket streamer (forming M1 bar
+  # + live OI only; docs/02 §3.4, docs/11 §5). Enable with
+  #   docker compose --profile streamer up -d
+  # Requires ANALYTICAL_ACTIVE_PROVIDER=upstox, a valid daily token, and
+  # ANALYTICAL_STREAM_ENABLED=true. Session-gated — idle outside NSE hours.
+  streamer:
+    profiles: ["streamer"]
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    environment:
+      <<: *backend-env
+      ANALYTICAL_STREAM_ENABLED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    command: ["analytical-worker", "stream"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../deploy/frontend.Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:5173:80"
+    restart: unless-stopped
+
+volumes:
+  db_data:

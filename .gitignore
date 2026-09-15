@@ -1,0 +1,91 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+.eslintcache
+
+# Generated API client (regenerated from OpenAPI in CI/build)
+frontend/src/api/generated/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+.secrets/
+**/.secrets/
+*.pem
+*.key
+
+# Upstox / provider tokens
+provider_tokens/
+*.token
+upstox_token.json
+
+# ---- Docker / local data ----
+deploy/data/
+pgdata/
+
+# ---- Upstox instrument masters (large, refreshed often) ----
+backend/.data/
+.data/
+*.dump
+*.sql.gz
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Editors / IDEs ----
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Misc ----
+.cache/
+tmp/
+scratch/
