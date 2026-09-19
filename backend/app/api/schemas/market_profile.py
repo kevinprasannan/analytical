@@ -66,3 +66,8 @@ class MarketProfileResponse(BaseModel):
     close_in_value_area: bool | None = None
     profiles: dict[str, ProfileBins] = Field(default_factory=dict)
     events: MPEventsBlock | None = None  # docs/14 event layer
+    # set only when `profiles["VOLUME"]` is borrowed from a linked FUTURE contract's
+    # own persisted Volume Profile (the index itself has no genuine traded volume) —
+    # `None` when VOLUME is the instrument's own, or absent entirely.
+    volume_source: str | None = None  # "FUTURE" | None
+    volume_source_contract_key: str | None = None

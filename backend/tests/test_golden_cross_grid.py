@@ -4,7 +4,10 @@ MAs as dynamic support/resistance. The DB endpoint is exercised by
 
 from __future__ import annotations
 
-from app.api.services import _gc_ma_proximity
+from datetime import UTC, datetime, timedelta
+
+from analytical_core.enums import InstrumentType
+from app.api.services import _GBar, _gc_grid_column, _gc_ma_proximity
 
 
 def test_near_slow_ma_from_above_reads_support():
@@ -46,3 +49,49 @@ def test_missing_ma_is_skipped_not_an_error():
     assert out["dist_to_fast_pct"] is None
     assert out["near_fast"] is False
     assert out["nearest_ma"] == "SLOW"
+
+
+def _bars(n: int, start: float = 100.0, step: float = 0.5) -> list[_GBar]:
+    import math
+
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    # a rising series with a wobble — a straight-line ramp makes EMA and SMA
+    # converge to the exact same steady-state lag, which would defeat the
+    # "these are two different computations" check below
+    closes = [start + i * step + 5 * math.sin(i / 7) for i in range(n)]
+    return [
+        _GBar(
+            ts=base + timedelta(minutes=i),
+            open=closes[i],
+            high=closes[i] + 1,
+            low=closes[i] - 1,
+            close=closes[i],
+            volume=1000,
+            is_final=True,
+        )
+        for i in range(n)
+    ]
+
+
+def test_ema_fast_slow_reported_alongside_the_dma_cross():
+    from analytical_core.indicators._common import ema_series
+
+    # >= slow_period (default 200) + cross_search_window bars so the primary
+    # SMA-based read is OK, not just the supplementary EMA one
+    bars = _bars(260)
+    col = _gc_grid_column("D1", bars, InstrumentType.INDEX, near_pct=0.003)
+    assert col["status"] == "OK"
+    assert col["fast"] is not None and col["slow"] is not None  # DMA (SMA) unaffected
+    assert col["ema_fast"] is not None
+    assert col["ema_slow"] is not None
+    assert col["ema_fast"] != col["fast"] or col["ema_slow"] != col["slow"]
+    closes = [b.close for b in bars]
+    assert col["ema_fast"] == round(ema_series(closes, 50)[-1], 4)
+    assert col["ema_slow"] == round(ema_series(closes, 200)[-1], 4)
+
+
+def test_ema_fields_absent_on_insufficient_data():
+    col = _gc_grid_column("D1", _bars(5), InstrumentType.INDEX, near_pct=0.003)
+    assert col["status"] == "INSUFFICIENT_DATA"
+    assert col["ema_fast"] is None
+    assert col["ema_slow"] is None

@@ -60,14 +60,21 @@ function Head({ c }: { c: GoldenCrossColumn }) {
   );
 }
 
-const dPct = (v: number | null) => (v == null ? DASH : `${v >= 0 ? "+" : ""}${pct(v * 100, 2)}`);
+const dPct = (v: number | null) => (v == null ? DASH : `${v >= 0 ? "+" : ""}${pct(v, 2)}`);
 
 const ROWS: { label: string; get: (c: GoldenCrossColumn) => string }[] = [
   { label: "Regime", get: (c) => (c.state === "ABOVE" ? "bullish (50 above 200)" : c.state === "BELOW" ? "bearish (50 below 200)" : DASH) },
   { label: "Last price", get: (c) => (c.last_price == null ? DASH : price(c.last_price)) },
   { label: "Fast (50)", get: (c) => (c.fast == null ? DASH : `${price(c.fast)} (${dPct(c.dist_to_fast_pct)})`) },
   { label: "Slow (200)", get: (c) => (c.slow == null ? DASH : `${price(c.slow)} (${dPct(c.dist_to_slow_pct)})`) },
-  { label: "Separation", get: (c) => (c.separation == null ? DASH : pct(c.separation * 100, 2)) },
+  {
+    label: "EMA (50/200)",
+    get: (c) =>
+      c.ema_fast == null && c.ema_slow == null
+        ? DASH
+        : `${c.ema_fast == null ? DASH : price(c.ema_fast)} / ${c.ema_slow == null ? DASH : price(c.ema_slow)}`,
+  },
+  { label: "Separation", get: (c) => (c.separation == null ? DASH : pct(c.separation, 2)) },
   { label: "Last cross", get: (c) => xTypeLabel(c.cross_type) },
   { label: "Bars since", get: (c) => (c.bars_since_cross == null ? DASH : num(c.bars_since_cross, 0)) },
   { label: "Cross date", get: (c) => (c.cross_ts ? c.cross_ts.slice(0, 10) : DASH) },
@@ -143,11 +150,15 @@ export function GoldenCrossGridPanel({ instrumentId }: { instrumentId: number })
             </table>
           </div>
           <p className="text-[11px] text-slate-400">
-            {d.fast_period}/{d.slow_period}-{d.ma_type} on each timeframe's own bars. A column is
+            {d.fast_period}/{d.slow_period}-{d.ma_type} on each timeframe's own bars — the cross
+            state above is read off this pair. <b>EMA ({d.fast_period}/{d.slow_period})</b> is the
+            same two periods computed as an exponential average instead, shown alongside for
+            reference — it doesn't drive the regime/cross/near-MA reads, which stay {d.ma_type}
+            -based. A column is
             tinted <span className="text-emerald-600">green</span> /{" "}
             <span className="text-rose-600">rose</span> when a cross printed within the recent
             window, or <span className="text-amber-700">amber</span> — "near {"{"}50/200{"}"}" —
-            when the last price sits within {pct(d.near_ma_pct * 100, 2)} of a moving average,
+            when the last price sits within {pct(d.near_ma_pct, 2)} of a moving average,
             reading that MA as dynamic support (price above it) or resistance (below). Descriptive
             — not a signal.
           </p>

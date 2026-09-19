@@ -225,6 +225,27 @@ against it carry `last_bar_final = false`.
   `SUPPORT` when price sits above that MA, `RESISTANCE` below). A missing MA
   (insufficient history for that period) is skipped, not an error.
   `GOLDEN_CROSS_GRID_VERSION` `0.1.0` → **`0.2.0`**.
+  **Extended 2026-09-16 (owner — "DMA 50 200 like need EMA one box"):** each
+  column also reports `ema_fast` / `ema_slow` — the same `fast_period` /
+  `slow_period` computed as an **EMA**, via a second `golden_cross()` call
+  with `overrides={"ma_type": "EMA"}`, regardless of the column's own
+  configured `ma_type` (default `SMA`). Purely a supplementary read alongside
+  the DMA cross — `state` / `cross_type` / `near_fast` / `near_slow` /
+  `nearest_ma` are all still driven by the one configured `ma_type` only, not
+  duplicated for EMA (no second cross-state, no second near-MA alert).
+  `null` when there isn't enough history for that period, independent of the
+  primary read's `status`. `GOLDEN_CROSS_GRID_VERSION` `0.2.0` → **`0.3.0`**.
+  **Fix 2026-09-16 (owner-flagged — "200 EMA showin 24300 around but in our
+  analytical showin 24453 ? D1"):** `_GC_GRID_LOAD` (bars fetched per column)
+  was `280` — enough for the 200-bar *SMA* window but far too little for the
+  *EMA* to actually converge, since an EMA is a recursive average that keeps a
+  decaying memory of bars before the window; seeded from ~280 bars (only ~80
+  past the SMA seed) it landed well off a broker/charting platform's
+  full-history EMA(200). Raised to `1500` (all four timeframes have far more
+  history than that) — EMA(200)'s exponential weight (`k = 2/201`) is
+  `> 99.99%` converged by then (`(1-k)^1500 ≈ 6e-7`). Verified: NIFTY D1
+  `ema_slow` moved from `24453` to `24286`, matching the owner's reference.
+  `GOLDEN_CROSS_GRID_VERSION` `0.3.0` → **`0.3.1`**.
 
 ## 8. Volume (resolves H9)
 
@@ -519,6 +540,295 @@ on instrument-detail. Descriptive — no bias score, no BUY/SELL, no target/stop
 
 ---
 
+## 9d. Candle Range Theory — CRT (read view, owner-authorised 2026-09-16)
+
+Pure `analytical_core.crt.scan_crt` — a **read view**, not an engine analysis
+(no factor score, no `analysis_results` row, no version guard, enums
+module-local). A candle's High-Low range is a **reference range**; the bars
+since it are read against four boundaries to say whether that range is being
+**accepted**, **rejected**, or **expanded** — not "green candle = bullish."
+
+- **Reference candle** = the bar `scan_bars` (default 5) back from the latest
+  in the column; **`ref_high`/`ref_low`/`ref_range`/`ref_midpoint`** from it.
+- **Compression** — the reference candle is flagged `is_inside_candle` when it
+  sits fully inside its own immediately-prior ("mother") bar
+  (`ref_high <= mother_high and ref_low >= mother_low`); the eventual break of
+  the *mother* bar's own high/low then matters more than the reference's own.
+- **Current position** (of the latest close) — `ABOVE_HIGH` / `BELOW_LOW` /
+  `AT_MIDPOINT` (within `at_midpoint_pct`, default 10 %, of the range around
+  the midpoint) / `INSIDE`.
+- **Breakout** — the first bar in the reacting window whose high clears
+  `ref_high` or low clears `ref_low` (a bar breaking both edges resolves by
+  its own close). From there: `close_outside` (is the *latest* close still
+  beyond the level), `returned_inside` (broke, but the latest close is back
+  under/over it — **rejection**), `holds_beyond` (the latest bar's own wick,
+  not just its close, stayed clear — a stronger hold), `retested` (a bar
+  pulled back within `retest_tol_pct` of the level before price ultimately
+  continued past it), and **range expansion** — `expansion_points` /
+  `expansion_multiple` (furthest travel beyond the level since the break, as
+  a multiple of `ref_range`; `>= expansion_multiple_strong`, default 0.5×,
+  reads as expansion rather than plain continuation).
+- **Volume confirmation** — `volume_confirms` compares the breakout bar's
+  volume to the scan window's average (`>= volume_confirm_multiple`, default
+  1.2×); `null` when the series carries no usable volume (the NSE INDEX feed —
+  same `NOT_APPLICABLE`-for-volume characteristic as §4). OI-based
+  confirmation is **not attempted** — OI already has its own dedicated reads
+  (`docs/05` §9, §11.4) and doesn't apply at the level of a single price bar;
+  a documented scope boundary, not a silent gap.
+- **Signal** (per column) — `COMPRESSION` (no breakout, `is_inside_candle`) /
+  `NEUTRAL` (no breakout, not inside) / `HIGH_REJECTION` / `LOW_REJECTION`
+  (`returned_inside`) / `RANGE_EXPANSION_UP` / `RANGE_EXPANSION_DOWN`
+  (`expansion_multiple >= expansion_multiple_strong`) / `BULLISH_CONTINUATION`
+  / `BEARISH_CONTINUATION` (breakout holds, not yet a strong expansion).
+
+`CRT_VERSION = "0.1.0"`. Exposed only as the **multi-timeframe grid**
+`GET /instruments/{id}/crt-grid` (`docs/07` §4.24) over 5m / 15m / 30m / 1h
+(M30 folded from M5), INDEX + FUTURE, `NOT_APPLICABLE` on OPTION; a
+`CrtGridPanel` on instrument-detail. Descriptive — no bias score, no BUY/SELL,
+no target/stop. *Scoped out of v1:* the ICT/HTF→LTF variant (a higher-timeframe
+candle's range read via lower-timeframe reaction, for liquidity-manipulation
+setups) is a different, more specific method the owner flagged as a possible
+follow-up — not built here, needs its own worked example first.
+
+---
+
+## 9e. Gann time cycles (read view, owner-authorised 2026-09-16)
+
+Pure `analytical_core.gann_cycles.scan_gann_cycles` — a **read view**, not an
+engine analysis (no factor score, no `analysis_results` row, no version
+guard, enums module-local). Owner: "Gann Days / Gann Time Cycles can we
+implement in our logic?" → clarified as "previous low day and high [day],
+then low high based on period with gann ideas" — the classic W.D. Gann
+day-count method: project forward fixed cycle lengths from the last
+significant swing low and swing high, and flag dates where several
+projections converge.
+
+- **Anchors** — over the last `lookback_bars` (default 260 ≈ 1y) daily
+  bars, the **previous swing low** = the bar with the lowest `low`, the
+  **previous swing high** = the bar with the highest `high` in that window
+  (the window's own extremes, not a fractal-confirmed minor swing — Gann
+  cycles are drawn from the major recent top/bottom, not every wiggle).
+- **Projections** — from each anchor date, `anchor_date + cycle_days` for
+  each of the classic Gann day-counts (default `45, 90, 120, 144, 180, 270,
+  360` **calendar** days); kept only when within `horizon_days` (default 60)
+  of today, so the read stays focused on near-term dates rather than the
+  full multi-year sweep.
+- **Confluence clusters** — projections (from either anchor, any cycle
+  length) whose target dates fall within `cluster_tolerance_days` (default
+  2) of each other are grouped; a cluster of 2+ is a stronger "time turn"
+  candidate than any single projection alone (single-linkage grouping,
+  walked chronologically).
+- Trading-date math reuses `app.ingestion.session.trading_date_of` (IST
+  calendar date of a bar-open UTC timestamp) — the pure module itself takes
+  plain ISO date strings, no timezone dependency.
+- **Filling past dates with what actually happened** (owner-flagged
+  2026-09-16 — "past data need fill the value"): a projection whose
+  `target_date` already has a bar on or shortly after it (within the same
+  loaded daily series the anchors came from) is resolved to that bar — the
+  nearest **trading** date on/after `target_date` (a weekend/holiday target
+  nudges forward to the next session) — and carries that bar's
+  `close`/`high`/`low`. A projection still ahead of the data we have (a
+  genuinely future date) is left unfilled (`resolved_date`/`actual_*` all
+  `null`). Lets the panel show, for a date that's already passed, what price
+  actually did there — the whole point of checking a Gann date against real
+  action, not just listing the date.
+
+Output: `{swing_low, swing_high}` anchors (`kind`, `anchor_date`, `price`);
+`projections: [{anchor_kind, anchor_date, anchor_price, cycle_days,
+target_date, days_from_today, resolved_date, actual_close, actual_high,
+actual_low}]`; `clusters: [{cluster_date, days_from_today, strength,
+projections}]`. `GANN_CYCLES_VERSION = "0.1.0"`. Exposed as
+`GET /instruments/{id}/gann-cycles` (`docs/07` §4.25) — a single read, not a
+timeframe grid (Gann cycles are calendar-date based, decision 4's 5m/15m/1h/
+1D grid model doesn't apply); INDEX + FUTURE, `NOT_APPLICABLE` on OPTION
+(dated contracts don't carry a year of D1 history); a `GannCyclesPanel` on
+instrument-detail. Descriptive — no bias score, no BUY/SELL, no
+entry/target/stop; these are calendar dates where a turn is more likely by
+Gann's method, not a signal.
+
+---
+
+## 9f. Gap-fade streak study (read view, owner-authorised 2026-09-16)
+
+Pure `analytical_core.gap_fade_study.scan_gap_fade_study` — a **read view**,
+not an engine analysis and explicitly **not a backtest** (owner: "its not
+backe test i need to analysis how its happen after that"): no entry, no
+exit, no target/stop, no hit-rate against a simulated trade. A descriptive
+historical study — for every day that gaps one way but closes the other,
+what actually followed, aggregated across the full available history.
+
+**Both reversal directions** (owner-extended 2026-09-17 — "like open low
+close/open high close actually it represent the reversal": the first
+version only covered the gap-up case, missing its mirror):
+- **UP** — gapped up and still closed down. A bearish-reversal candidate;
+  the following streak counts **lower**-closing days.
+- **DOWN** — gapped down and still closed up. A bullish-reversal candidate;
+  the following streak counts **higher**-closing days.
+
+- **Event** — the same threshold shape as the Daily Digest gap filter
+  (`docs/07` §4.12), doubled for the mirror direction: `gap_pct >=
+  gap_up_min_pct` (default 0.5%) and `change_pct <= chg_down_max_pct`
+  (default −0.5%) → `UP`; `gap_pct <= gap_down_max_pct` (default −0.5%) and
+  `change_pct >= chg_up_min_pct` (default 0.5%) → `DOWN`. Every day in the
+  loaded D1 history that qualifies either way is its own independent
+  occurrence (no de-duplication when two qualifying days' windows overlap).
+- **Streak** — consecutive closes continuing in the reversal's own
+  direction, starting on the event day itself (already such a day by
+  definition); ends on the first day that closes against that direction.
+- **Consolidation box** (owner-clarified 2026-09-16, "simple box" over an
+  ATR-squeeze alternative) — the high/low of the first `box_days` (default
+  3) days right after the streak ends. `consolidation_days` = how many days
+  from the box's start until the breakout (or until the search window runs
+  out, if no breakout has happened yet). Direction-agnostic — a `DOWN`
+  event's box can still break either way, same as `UP`.
+- **Breakout** (owner-clarified 2026-09-16, "close breaks the box by a
+  buffer" over a bare box-touch) — the first day the **close** clears the
+  box high/low by `breakout_buffer_pct` (default 0.3%); direction `UP` or
+  `DOWN` (independent of the triggering event's own direction). Search gives
+  up after `max_breakout_search_days` (default 90) — that occurrence is left
+  `CONSOLIDATING` rather than scanned indefinitely.
+- Per-occurrence `status`: `STREAK_ONGOING` (event too recent, streak hasn't
+  ended within the data) / `INSUFFICIENT_BOX_DATA` (streak ended but not
+  enough bars yet to form the box) / `CONSOLIDATING` (box formed, no
+  breakout within the search window) / `BREAKOUT_UP` / `BREAKOUT_DOWN`.
+
+Output: `summaries` — **one per direction** (`UP` then `DOWN`, always both
+present even when empty), each `{direction, n_occurrences, n_streak_resolved,
+mean/median streak days, streak_day_histogram, n_breakout_resolved,
+mean/median consolidation days, breakout up/down counts, breakout_up_pct}`
+— and `occurrences` (both directions combined, newest first, capped at
+`max_occurrences` default 200 *per direction*) — each `{event_date,
+direction, gap_pct, change_pct, streak_days, streak_end_date, status,
+box_start_date, box_high, box_low, consolidation_days, breakout_date,
+breakout_direction}`. `GAP_FADE_STUDY_VERSION` `0.1.0` → **`0.2.0`** (the
+`summary` singular → `summaries` list restructuring, `direction` field
+added — a clean break, not worth a migration path this soon after the
+feature shipped). Exposed as `GET /instruments/{id}/gap-fade-study`
+(`docs/07` §4.26) — all thresholds overridable per request; runs over the
+**entire** D1 history (not a lookback window, unlike Gann cycles — the whole
+point is "what has historically followed"); INDEX + FUTURE, `NOT_APPLICABLE`
+on OPTION; a `GapFadeStudyPanel` on instrument-detail, side by side per
+direction. Descriptive — no bias score, no BUY/SELL, no entry/target/stop.
+
+---
+
+## 9g. Economic event calendar (read view, owner-authorised 2026-09-16)
+
+Pure `analytical_core.event_calendar.scan_event_calendar` — a **read view**,
+not an engine analysis (no factor score, no `analysis_results` row, no
+version guard, enums module-local). Owner: "news driven i need basic news
+like fed powell and Auto sale and indian Gst... predefined news like
+unemployment data... calander based on the calander view... previous close
+- today close" — clarified across follow-ups to: **not live news**, a small
+set of **recurring-date** event types generated by deterministic rule, each
+with a before/after price read on the instrument being viewed, shown on an
+actual calendar grid. Owner explicitly confirmed the price read is against
+the NSE instrument on screen (NIFTY/BANKNIFTY/SENSEX), not against
+gold/silver/bonds — this system tracks NSE index/derivatives only (decision
+2) — and separately confirmed the intent is informational/anticipatory
+context ("mind will change... 75 percent will not happen 25 only will
+happen but it will get some idea"), not a predictor — the
+`pct_notable_move` stat *is* exactly that real historical base rate,
+computed from data rather than assumed.
+
+- **US_JOBS_REPORT** — first Friday of each month. A clean, unchanging
+  calendar rule; generated for the full span of loaded daily bars.
+- **US_JOBLESS_CLAIMS** (owner-authorised 2026-09-17, cross-checked against
+  investing.com's own economic calendar, which flags it as a genuine
+  high-impact weekly release) — every Thursday, no approximation needed (a
+  real weekly formula, unlike the monthly releases below). Generated
+  week-by-week (`_thursdays()`) rather than month-by-month; the shared
+  `horizon_end` (first of the horizon's last month) needed its own day-level
+  extension (`horizon_end_day` = the last day of that month) for this one —
+  the month-granularity generators don't care about the exact day, but a
+  weekly walk under-covers the horizon's last month without it (caught while
+  building, not by inspection — the first version of this generator silently
+  produced zero occurrences for month-granularity horizons).
+- **INDIA_GST_COLLECTION** — nearest trading day on/after the 1st of each
+  month; no occurrences generated before `gst_start_date` (default
+  2017-07-01, when GST launched).
+- **MCX_GOLD_EXPIRY** / **MCX_SILVER_EXPIRY** — the 5th calendar day of each
+  month, snapped **backward** to the nearest earlier trading day (MCX
+  contract expiry convention). **Approximate**: this system has no MCX
+  holiday calendar, so NSE's own trading days stand in for it — mostly but
+  not always identical, since MCX and NSE are both Indian exchanges and
+  largely share the same holiday calendar. Both land on the same date since
+  they share the rule. (Renamed from the original `GOLD_EXPIRY`/
+  `SILVER_EXPIRY` on 2026-09-17 when the US/COMEX pair was added, to keep
+  the two exchanges unambiguous.)
+- **COMEX_GOLD_EXPIRY** / **COMEX_SILVER_EXPIRY** (owner-authorised
+  2026-09-17 — "US gold expiry?") — the 27th calendar day of each month, a
+  rule-of-thumb stand-in for "a few business days before month end" (COMEX's
+  own convention isn't a clean day-of-month rule), snapped backward the same
+  way as the MCX pair. **A cruder approximation than MCX**: COMEX (US) and
+  NSE (India) share no holiday calendar at all, so a US-holiday week can
+  land this a day or more off — flagged to the owner before building, who
+  accepted the tradeoff. Lands on a different date than the MCX pair (5th
+  vs. 27th of the month), by design.
+- **FED_RATE_DECISION** — **not generated**, supplied from a small
+  owner-maintained seed list in `app/api/services.py`
+  (`_FOMC_RATE_DECISION_DATES`) — FOMC meeting dates are committee-set, not
+  a formula, so nothing can generate them. Owner-authorised 2026-09-16
+  ("fed rate decision not coming"); seeded from training knowledge for
+  **2023-2025**, at moderate confidence, **not independently verified** —
+  deliberately not extended further back to avoid presenting unverified
+  dates as historical fact. **2026 dates are owner-confirmed only**, never
+  from training-knowledge recall (2026 is at/past this model's knowledge
+  cutoff) — the first, `2026-09-16`, was added the same day the owner
+  reported "Fed rate decision yesterday but its not showing." Extend the
+  constant directly (or ask for it to be extended) with real dates as
+  needed; cross-check against federalreserve.gov before relying on it for
+  anything beyond a rough read.
+- **ECB_RATE_DECISION** (owner-authorised 2026-09-17, following the same
+  investing.com reference the owner shared) — same treatment as
+  `FED_RATE_DECISION`: **not generated**, a small owner-maintained seed list
+  (`_ECB_RATE_DECISION_DATES` in `app/api/services.py`), committee-set with
+  no formula. Seeded for **2023-2025** at moderate confidence, not
+  independently verified; no 2026+ entries (same reasoning as Fed — nothing
+  guessed past this model's knowledge cutoff). Cross-check against
+  ecb.europa.eu before relying on it beyond a rough read.
+- **RBI_RATE_DECISION** (owner-authorised 2026-09-17, flagged 🔴 very high
+  priority in the owner's events list) — same treatment as
+  `FED_RATE_DECISION`/`ECB_RATE_DECISION`: **not generated**, a small
+  owner-maintained seed list (`_RBI_RATE_DECISION_DATES` in
+  `app/api/services.py`), committee-set (RBI Monetary Policy Committee) with
+  no formula. Seeded for **2023-2025** at moderate confidence, not
+  independently verified — bi-monthly (6/year, unlike Fed/ECB's 8); no
+  2026+ entries (same reasoning as Fed/ECB). Cross-check against rbi.org.in
+  before relying on it beyond a rough read.
+- **FNO_EXPIRY** — **not generated**, supplied as real dates from the
+  tracked option/future universe. Deliberately **not backfilled
+  historically**: `instruments` only retains the current + next contract
+  (older ones are pruned on each universe roll — decision `docs/04` §2.3),
+  and NSE's expiry weekday convention has itself changed over the years
+  (Thursday → Tuesday), so no reliable formula exists for reconstructing
+  past dates without risking wrong dates presented as fact. In practice this
+  means `FNO_EXPIRY` shows on the calendar (current + next month) but never
+  carries a historical `pct_notable_move` — flagged to the owner before
+  building rather than silently thin data.
+- A date beyond the loaded series (still upcoming) is listed with no price
+  fields — `future_horizon_months` (default 2) controls how far past the
+  last loaded bar the calendar still shows known upcoming dates. Applies
+  uniformly to every event type, generated or supplied.
+- For every occurrence that does fall within the loaded series: `prior_close`
+  / `close` / `change_pct` (close vs prior close) and `next_close` /
+  `next_change_pct` (the following day, a lagged-reaction read).
+
+Output: `summaries` (one per event type — `n_occurrences`, `n_resolved`,
+mean/median `|change_pct|`, `pct_notable_move` = the real % of occurrences
+whose move was `>= notable_move_pct` (default 0.5%), up/down counts) and a
+flat `occurrences` list (every historical + near-future date, across all
+six types) — the frontend groups this into whichever month the calendar
+grid is showing, not the API. `EVENT_CALENDAR_VERSION = "0.1.0"`. Exposed as
+`GET /instruments/{id}/event-calendar` (`docs/07` §4.27); INDEX + FUTURE,
+`NOT_APPLICABLE` on OPTION; an `EventCalendarPanel` on instrument-detail
+rendering an actual month-grid calendar (not a chart — a structured grid of
+text/number cells, same spirit as the Market Profile TPO letter grid).
+Descriptive — no bias score, no BUY/SELL, no entry/target/stop; anticipatory
+context from real history, not a prediction.
+
+---
+
 ## 10. Market Profile (resolves H4, H5; strategic directives 5, 13)
 
 Two profile types — **TPO** and **Volume Profile** — built by separate builders
@@ -601,7 +911,27 @@ If fewer than `ib_periods` periods have elapsed → `ib_high = ib_low = null`,
   the overlapped bin count).
 - `vol[bin]` = Σ distributed volume (`math.fsum`).
 - Requires `has_volume`; otherwise the Volume Profile is omitted and only TPO is
-  produced.
+  produced. In practice an **INDEX** always falls into this case even when its
+  `has_volume` flag is `true` (a DB default, not a reflection of reality) —
+  an index is a calculated value, never itself bought/sold, so its own bars
+  carry `volume = 0` and `build_profile` returns `None` for `total <= 0.0`
+  regardless of the flag.
+  **Borrowed FUTURE volume (`app.api.services.market_profile_view`, read
+  layer only, owner-authorised 2026-09-17 — "FOR MARKET PROFILE ADD WITH
+  FUTURE VOLUME"):** when `GET /instruments/{id}/market-profile` is asked
+  for an INDEX session with no VOLUME row of its own, it looks up the
+  nearest linked FUTURE contract (`Instrument.underlying_id == index_id`,
+  soonest `expiry_date >= session_date`) and, if that FUTURE already has its
+  own **persisted** Volume Profile for the same `session_date`, folds those
+  bins into the response as `profiles["VOLUME"]`. No new computation, no
+  engine change, no migration, no `ALGO_VERSION`/`SCORING_VERSION` bump —
+  purely a second `SELECT` against `market_profile_sessions` data the
+  regular cycle already builds for the future (futures trade with real
+  volume). The response discloses the source (`volume_source: "FUTURE"`,
+  `volume_source_contract_key`) rather than silently presenting it as the
+  index's own — the future's own price grid can sit a small basis away from
+  the index's, so this is a disclosed approximation, not a claim of exact
+  equivalence. `docs/07` §4.4, `docs/08`.
 
 ### 10.7 POC & Value Area (deterministic; resolves M10)
 
@@ -890,10 +1220,137 @@ change* through the session, not a forecast and not a BUY/SELL (decision 15).
   **`buildup_session`** — consistent with the list it sits in (an *added* row is
   always a `*_BUILDUP`, a *reduced* row a `LONG_UNWINDING` / `SHORT_COVERING`) —
   and `buildup_now` (= the recent-band `buildup`) is surfaced when it diverges
-  ("built all day, now unwinding"). `time_band` (3 / 5 / 10 / 15) is the
-  recent-band minutes; `moneyness` filters the buckets. Options only;
+  ("built all day, now unwinding"). `time_band` (1 / 3 / 5 / 10 / 15 — `1`
+  added 2026-09-17) is the recent-band minutes; `moneyness` filters the
+  buckets. Options only;
   `GET /instruments/{id}/oi-movers`; a `/instruments/:id/oi-movers` screen.
   Positioning labels only — no BUY/SELL.
+  **LTP trace** (`app.api.services.oi_mover_ltp_trace` →
+  `analytical_core.options.build_ltp_trace`, `docs/07` §4.22, owner-authorised
+  2026-09-17 — watching a crowded strike's premium for where a build-up might
+  "find liquidity"): for one `(strike, option_type)`, pairs each of that
+  option's session M1 premium ticks with the underlying's own LTP and that
+  strike's own OI, each at/just before the same instant — no resampling, no
+  indicator, no positioning label, just OI and the two price series lined up
+  tick for tick. `_at_or_before` (the same lookup `oi_pulse`'s trace already
+  uses) supplies the underlying and OI sides, so a gap in either feed carries
+  its last known value forward rather than leaving a hole (`oi` is `None`
+  only when the strike has no OI sample at all yet). **OI column added same
+  day** (owner — "Strike LTP trace WITH oi NEEDED"): `oi_series` threaded
+  through from `OpenInterest` for the resolved option instrument, same as
+  `underlying_ltp`'s pattern. **OI change column added same day** (owner —
+  "aDD oi CHANGE ALSO"): `oi_change` = `oi` minus `oi_series[0]`'s own value
+  — deliberately not a fresh session-open lookup, since the caller already
+  pre-filters `oi_series` to `ts >= session_open` (the same convention
+  `option_premium` / `spot_series` already follow), so the passed-in
+  series's first sample *is* the session-open read. `GET
+  /instruments/{id}/oi-movers/ltp-trace?strike=&option_type=`; a **`LTP
+  trace`** tab on the `/instruments/:id/oi-movers` screen. **Tick-to-tick OI
+  Δ added same day** (owner — "PREVIOUS ROW - CURRENT ONE COLUMN ADDITONAL
+  NEED", alongside the server-computed cumulative `oi_change`): the frontend
+  table's `OI Δ (prev)` column is computed client-side from adjacent rows
+  already present in the response — no backend/schema change, since the
+  full ordered series is already there and "versus the row above it" is a
+  pure display concern (docs/08).
+  **N-minute grouping with an LTP low–high band** (owner — "i NEED
+  FILTRATION IN ltp TRACE IF LTP LOW HIGH BAND LIKE IF 5 MIN MULTIPLE PRICE
+  MEANS"): frontend-only, no backend/schema change — the same raw 1-min
+  `series` is grouped client-side into session-open-anchored N-min windows
+  (`bucketTrace`), each window reporting `optLow`/`optHigh` (+ the
+  underlying's own low/high) instead of every tick; rendered as a single
+  price when a window only ever saw one, a `low–high` band when it saw more
+  than one. OI / OI Δ columns read the window's last tick (a running value,
+  not something to band) rather than aggregating. `1m` (the default) is a
+  1:1 passthrough of the raw series, so nothing changes unless the owner
+  actually groups.
+  **Price-difference columns** (owner — "CAN U ADD PRICE DIFFERNCE IN ltp
+  TRACE", same day): `LTP Δ` / `<underlying> Δ` sit beside their respective
+  LTP columns — each row's own close (its last raw tick, whether grouped or
+  not) minus the previous row's close, `sPrice`-formatted (signed). Reuses
+  the `optClose`/`undClose` fields the grouping feature above already
+  carries, so the low–high band and its plain difference are computed from
+  the same close values that drive the row's colour — frontend-only, no
+  backend/schema change.
+  **Near-expiry auto-pick now prefers a tracked expiry** (owner-flagged
+  2026-09-17 — "SENSEX SHOWING 11:45 AM ONLY?"): `services.option_expiries`
+  gained an `only_tracked` filter and a new `services._pick_near_expiry`
+  helper, used by `option_chain`, `oi_pulse`, and `oi_mover_ltp_trace`
+  wherever the caller doesn't name an explicit `?expiry=`. Root cause — the
+  universe roll (`app.instruments.roll`) periodically drops a just-expired
+  week's option contracts from `is_tracked`, but their rows (and stale
+  OI/price history) stay in the table; `option_expiries()` never filtered
+  on `is_tracked`, so once SENSEX's own weekly expiry (which happened to
+  land that trading day) rolled off mid-session, "the near expiry ≥ today"
+  kept resolving to that now-frozen contract — every OI-pulse/OI-movers/LTP-
+  trace reading silently came from data that stopped updating the moment of
+  the roll (11:45 IST that day), not "now", while NIFTY's own near expiry
+  happened to still be several days out and never hit the bug. The picker
+  now prefers the nearest **tracked** expiry ≥ today, falling back to the
+  full expiry list (tracked or not) only if nothing at all is tracked for
+  that underlying. The full `expiries[]` list returned to the frontend is
+  unchanged (still includes the frozen expiry, so it can still be picked
+  explicitly for historical inspection) — only the *default* auto-pick
+  changed.
+- **OI ladder** (`build_oi_ladder` in `oi_pulse.py`, `app.api.services.oi_ladder`,
+  `docs/07` §4.22, owner — "i NEED FILTRATION IN ltp TRACE IF LTP LOW HIGH
+  BAND LIKE IF 5 MIN MULTIPLE PRICE MEANS" → clarified via follow-up as a
+  distinct request: "one more display option in LTP Trace [/] oi movers"
+  with a pasted mock showing time columns mirrored either side of a strike
+  column — confirmed via `AskUserQuestion` as a classic CE | strike | PE
+  option-chain layout, but with OI **change between time columns** instead
+  of a single "now" snapshot). Distinct from `OiPulse.trace` (§ above), which
+  aggregates every strike into one number per side per mark — this keeps
+  every strike its own row, so a trader can see *where on the chain* OI is
+  moving, not just how much moved in total. `build_oi_ladder(legs, marks,
+  spot, *, window_up=, window_down=)`: for each strike (optionally windowed
+  to N strikes above/below ATM — same step-inference convention as
+  `build_oi_pulse`'s own `trace_window_up`/`_down`), resolves CE/PE OI at
+  each of `marks` (ascending) via `_at_or_before`, plus each mark's change
+  from the mark before it (`oi_delta`, `None` on the first column — the
+  ladder is deliberately **OI-delta only**, per the owner's framing, not a
+  raw-OI display). `services.oi_ladder` generates `marks` as `n_marks`
+  `step_min`-spaced times ending at `min(now, session_close)` (default 3
+  marks, 1 min apart, matching the owner's pasted mock exactly), resolves
+  the near expiry via the same `_pick_near_expiry` fix above, and loads only
+  each strike's OI series (no premium/volume needed for this view). `GET
+  /instruments/{id}/oi-ladder?marks=&step_min=&window_up=&window_down=`; a
+  third **`OI ladder`** tab on the `/instruments/:id/oi-movers` screen next
+  to `Movers`/`LTP trace`. **Per-column max-|Δ| elevation** (same day, owner
+  — "each maximum no oI change back ground color elevate"): frontend-only —
+  each time column's single biggest `|oi_delta|` on each side gets an
+  elevated background in addition to the usual colour, so the reader isn't
+  left scanning every cell to spot the standout mover; a `0` delta is never
+  elevated. **Underlying LTP on hover + wider default window** (2026-09-18,
+  owner — "±10 around ATM and mouse hover can we show price"): `window_up`/
+  `window_down` request defaults widened 6→7→10 (two requests same day —
+  the ladder's frontend defaults, not the API's own `Query(...)` defaults,
+  which stay 6). `build_oi_ladder` gained an `underlying_series` param and
+  a matching `underlying_at_marks` output field — the underlying's own LTP
+  at/just-before each mark, via the same `_at_or_before` lookup already
+  used for OI, so a reader can see what the underlying was doing at a given
+  time column without a chart. `services.oi_ladder` loads the underlying's
+  M1 close series the same way `oi_pulse` already loads its own spot
+  series. Frontend: each time-column header carries a native `title`
+  tooltip (dotted underline, `cursor-help`) — no chart, no new UI surface,
+  just a hover disclosure on data already computed.
+  **Per-cell tooltip with option LTP added same day** (owner — "tool tip is
+  a good idea if possible add option price also and tool tip not working
+  showing symbol '?'"): the native header `title` was reported broken —
+  browsers only surfaced the `cursor-help` "?" icon, no visible tooltip
+  text. Replaced with a real, always-rendering custom CSS tooltip on every
+  OI-Δ **cell** instead of the header, so hover context and the OI reading
+  live together. `OiLadderCell` gained an `ltp: float | None` field (that
+  option's own premium at the mark, resolved the same `_at_or_before` way);
+  `build_oi_ladder`'s `_cells()` now reads `lg.premium` too, and
+  `services.oi_ladder` loads each option's M1 close series (same query
+  shape `oi_pulse` already uses) and passes it into `OiLegSeries.premium`
+  instead of `()`. Frontend tooltip shows strike/side/time, OI (+ Δ), LTP,
+  and the underlying's LTP together. Anchored to the hovered cell's own
+  edge (not centred) and flipped to open upward for the table's last row —
+  a centred/downward-only tooltip clipped against the table's own
+  horizontal-scroll container at the far edges and the bottom row, caught
+  by screenshotting those exact positions rather than assuming the first
+  fix worked. Options only, positioning read only — no BUY/SELL.
 
 ### 11.5 Option-strategy suggestions (`strategy.py`, `docs/07` §4.13)
 

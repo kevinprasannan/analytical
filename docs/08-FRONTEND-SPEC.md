@@ -37,7 +37,7 @@
 | `/instruments/:id/option-chain` | Option chain for one expiry (INDEX only): expiry selector + summary (spot, ATM, PCR, max-pain, total CE/PE OI) + a strike ladder (CALLS \| STRIKE \| PUTS) of ΔOI · OI · θ · Δ · IV% · O/H/L · LTP. IV/greeks/PCR/max-pain computed on read (`/instruments/:underlying_id/option-chain`, `docs/07` §4.4). **ATM-centred & auto-adjusting:** the chain re-polls every 30 s in session; a **`±8 / ±12 / ±20 / all`** near-money window keeps `2k+1` strikes centred on the ATM (sliding the band if ATM is near an edge), a **`follow ATM`** toggle re-centres the table on the ATM row whenever spot crosses a strike (scrolls the table box only, not the page), and a **pinned ATM strip** (sticky) shows ATM strike · spot · CE/PE LTP + ΔOI · PCR · max-pain so the money row stays on screen. Sticky table header; ATM row ring-highlighted, ±1 rows tinted. Below the ladder, the **`StrategyBook`** panel (see the OI-pulse row). Table only. |
 | `/instruments/:id/daily-digest` | **Daily digest** (`/instruments/:id/daily-digest`, `docs/07` §4.12) — one row per trading day: date · day · O/H/L/C · change % · gap % · range % · PDH · PDL · a range-type chip (inside / PDH break / PDL break / outside, plus `c>PDH` / `c<PDL`) · **c-loc** (close position in the range) · **day type** (classified from the D1 candle for every day; the TPO day-type shown alongside when it differs) · the day's TPO profile (shape / POC / close-vs-value) where one exists. Filter bar (from / to date, sort, page size, **gap % ≥/≤ and close % ≥/≤** — owner-authorised 2026-09-15, e.g. a **"gap-up fade preset"** button sets gap ≥ 0.5 / close ≤ −0.5 in one click for "gapped up then faded to close down" days; a `clear` link when any is set), a summary strip (PDH/PDL break counts + %, inside/outside days, mean range/gap/**close change** %, days-with-TPO-profile) with a D1-day-type distribution and a **`filtered: gap […] · close […]`** badge when the gap/close filter is active, paged — `total` / the summary counts reflect only the matching days. INDEX / FUTURE (options are chain-only). Table only; descriptive, no execution language. |
 | `/instruments/:id/oi-pulse` | **OI pulse** — trending open interest for one expiry (INDEX only, `/instruments/:underlying_id/oi-pulse`, `docs/07` §4.11). Panels: **Pulse** (spot, PCR open→now, max-pain open→now + shift, OI support/resistance strike, total & net-session ΔOI per side, a `bias` chip); **strike ladder** (CALLS \| STRIKE \| PUTS of OI · Δsession · Δ15m · buildup, support/resistance rows tinted, `S`/`R` marks); **session trace** (5-min time-series, newest first: spot · calls ΔOI + (Δ) · puts ΔOI + (Δ) · diff ΔOI · diff % · dir-of-change · PCR · COI PCR · VOL PCR · sentiment). `buildup`/`bias`/`sentiment` are positioning labels; table only, no charts. Auto-refreshes each minute. **`StrategyBook`** panel (shared with the option-chain screen, `/instruments/:underlying_id/option-strategies`, `docs/07` §4.13): a disclaimer banner, the classified positioning **view** (Rangebound / Leaning / Trending / Vol-expansion + confidence + evidence + walls/max-pain/PCR/net-ΔOI), then per structure a card — name, family/risk(defined·undefined)/net(credit·debit)/bias chips, a legs table (**BUY/SELL** · ×lots · CE/PE · strike · LTP · OI · ΔOI · role), and approx max-profit / max-loss / breakevens + rationale + caveats. This is the **only** panel in the UI that shows BUY/SELL — owner-authorised, always disclaimed. |
-| `/instruments/:id/oi-movers` | **Big OI movers** — options only (INDEX detail link, `/instruments/:underlying_id/oi-movers`, `docs/07` §4.22). A context strip (spot · expiry · PCR · max-pain · support/resistance strike · net CE/PE ΔOI · which side drew the fresh OI) then **two side-by-side tables — `OI added` and `OI reduced`** — the near-expiry strikes with the biggest session ΔOI increase / decrease. Each row: strike + moneyness · CE/PE · OI · **Δ session** · Δ% · **Δ recent** · LTP · **LTP Δ%** (premium change vs today's open, with the last-band change shown small when it diverges) · a **buildup** chip (the *session* read — an `OI added` row is always a *buildup*, a `reduced` row a *unwinding / covering*; colour-coded) with a small **`now:`** tag when the last band's read diverges (the day's build accelerating or reversing). A **`3 / 5 / 10 / 15 m` recent-band toggle** sets the Δ-recent window; **moneyness chips** (deep ITM / ITM / ATM / OTM / deep OTM) filter the strikes. Click the `Δ session` / `Δ recent` header to re-rank a list. Auto-refreshes ~45 s in session. Positioning labels only — table only, no BUY/SELL. |
+| `/instruments/:id/oi-movers` | **Big OI movers** — options only (INDEX detail link, `/instruments/:underlying_id/oi-movers`, `docs/07` §4.22). A context strip (spot · expiry · PCR · max-pain · support/resistance strike · net CE/PE ΔOI · which side drew the fresh OI) then **two stacked panels — `OI added` and `OI reduced`** — the near-expiry strikes with the biggest session ΔOI increase / decrease. **CE and PE render as separate boxes side by side within each panel** (owner-authorised 2026-09-17 — "CE PE sepearte box", `CePeBoxes`) rather than one mixed table sorted by magnitude — the redundant `type` column dropped in favour of a `Calls (CE)` / `Puts (PE)` box heading, the 🔥 crowded flag moved onto the strike cell. The two Added/Reduced panels stack full-width (not side-by-side) specifically so each CE/PE box gets a full half-page width — the row is wide (8 columns), and quartering it looked cramped in an early pass. Each row: strike + moneyness · OI · **Δ session** · Δ% · **Δ recent** · LTP · **LTP Δ%** (premium change vs today's open, with the last-band change shown small when it diverges) · a **buildup** chip (the *session* read — an `OI added` row is always a *buildup*, a `reduced` row a *unwinding / covering*; colour-coded) with a small **`now:`** tag when the last band's read diverges (the day's build accelerating or reversing). A **`1 / 3 / 5 / 10 / 15 m` recent-band toggle** (`1m` added 2026-09-17, owner: "ONE MORE FILTER 1MIN") sets the Δ-recent window; **moneyness chips** (deep ITM / ITM / ATM / OTM / deep OTM) filter the strikes. Click the `Δ session` / `Δ recent` header to re-rank a list, or a **strike** to jump straight to its trace. A **`Movers` / `LTP trace` tab switcher** (owner-authorised 2026-09-17 — "another tab with time ltp and nifty ltp") sits next to the recent-band toggle; the **`LTP trace`** tab (`docs/07` §4.22) shows a strike/option-type picker (defaults to today's top OI add) and a newest-first table — time (IST) · that strike's own **OI** · **OI Δ (prev)** (change vs. the row right above it, tick to tick — frontend-only, derived from adjacent rows already in the response, added same day, owner — "PREVIOUS ROW - CURRENT ONE COLUMN ADDITONAL NEED") · **OI Δ (session)** (cumulative change vs. the trace's own first tick, ≈ today's session open; server-computed `oi_change` field, added same day, owner — "aDD oi CHANGE ALSO") · that strike's LTP · the underlying's LTP at the same tick (OI column added same day, owner — "Strike LTP trace WITH oi NEEDED"), each price/OI/Δ cell colour-coded vs. the previous row. **`group` bucketing** (added 2026-09-17, owner — "i NEED FILTRATION IN ltp TRACE IF LTP LOW HIGH BAND LIKE IF 5 MIN MULTIPLE PRICE MEANS"): a `1 / 3 / 5 / 10 / 15 m` toggle (same values as the Movers tab's recent-band, `bucketTrace` in `OiMovers.tsx`, frontend-only — the raw 1-min series already has everything needed) groups consecutive 1-min ticks into N-min, session-open-anchored windows; each window's time column becomes a range (`15:35–15:39`) and its LTP columns become a **low–high band** (`99.00–104.70`) whenever that window actually saw more than one price, a plain single value when it didn't — OI / OI Δ columns read the window's *last* tick (a running value, not something to band). The up/down colour on a grouped row compares each window's **last** tick to the previous window's last tick (not high-to-high), so colouring stays meaningful once ranges are involved. **Price-difference columns** (added 2026-09-17, owner — "CAN U ADD PRICE DIFFERNCE IN ltp TRACE"): **LTP Δ** and **`<underlying>` Δ** sit right after their respective LTP columns — the plain signed price change (row's own close vs. the previous row's close, `sPrice`) next to each low–high band, so the reader isn't left inferring the delta from the band and the colour alone. A third **`OI ladder`** tab (`docs/07` §4.22, owner: "one more display option in LTP Trace [/] oi movers", confirmed via follow-up as a CE/PE-mirrored ladder) shows a classic **Calls (CE) OI Δ | strike | Puts (PE) OI Δ** table across `marks` recent time columns (`step`/`columns` controls, default **6 columns 3 min apart** — widened from the initial 3×1m same day, owner: "default 3 min and 6 columns and add another strike above and below") — calls read left→right (oldest → newest, toward the strike column), puts right→left (mirrored, newest closest to the strike column), each cell the OI **change since the column beside it** (not a running total), ATM row highlighted, strikes windowed to **±10** of ATM by default (widened 6→7→10 across two same-day requests). **Per-column max-|Δ| elevation** (added same day, owner — "each maximum no oI change back ground color elevate"): the single biggest `|OI Δ|` on each side in each time column gets an elevated background (on top of the usual green/rose text) so the standout mover per column reads at a glance; a `0` delta is never elevated. **Hover-for-price, per cell** (added same day, owner — "mouse hover can we show price" then "tool tip is a good idea if possible add option price also and tool tip not working showing symbol '?'"): the first pass used a native `title` on the header (`cursor-help`), which the owner reported showed only the `?` help-cursor icon with no visible tooltip text; replaced with a real always-rendering CSS tooltip on every OI-Δ cell — hovering shows that strike/side's own OI (+ change), its own **LTP** (server-added same day), and the underlying's LTP, all at that exact time mark. Anchored to the cell's own edge (not centred) and flipped to open upward only for the table's last row, both to avoid the tooltip clipping against the table's horizontal-scroll container edges. Auto-refreshes ~45 s in session. Positioning labels only — table only, no BUY/SELL. |
 | `/instruments/:id/premium-decay` | **Premium decay** — options only (INDEX detail link, `/instruments/:underlying_id/premium-decay`, `docs/07` §4.23). A context strip (spot · expiry (+selector) · days-to-expiry · a **fast decay zone** badge when `dte ≤ 5` · ATM call/put/straddle θ per lot · session elapsed) then a single **CALLS \| STRIKE \| PUTS** ladder (mirrored columns, ATM row highlighted): **LTP** (+ IV%) · **θ/lot** (₹/day for one lot, + %/day of premium) · **expected → actual** (the theta-implied move since today's open vs. what the premium actually did) · a **state** chip — `as expected` / `decaying faster` / `offset by move` / `—`. Auto-refreshes ~45 s in session. Descriptive decay-vs-move read only — table only, no BUY/SELL. |
 | `/instruments/:id/backtest` | **Opening-range breakout backtest** (INDEX only, `/instruments/:id/backtest/orb`, `docs/07` §4.15). A parameter form — from/to date, five IST `HH:MM` fields (range from/to, breakout from/to, measure-until), target multiples, an M1/M15 toggle, **Run** — then a result strip (days, breakout rate, long/short, per-target hit-rate + avg minutes, stop rate, avg range / MFE / MAE in R), a weekday hit-rate table, and a per-day table (date · day · range · size · dir[+imm] · break time · per-target minutes-to-hit / "stop" · stop time · MFE · MAE). Table only; labelled "descriptive backtest — not a signal, not advice". |
 | `/instruments` | Instrument Manager — browse all; toggle `is_tracked`; set `profile_bin_size`. |
@@ -46,7 +46,7 @@
 | `/config` | Configuration — schema-driven form. |
 | `/calendar` | Trading days / session status. |
 | `/astro` | Astro × market (`docs/13` §5). Four views via a segmented control. **Patterns** — descriptive cross-tabs of daily index return by weekday / Moon nakshatra / lagna / tithi vs a pooled baseline (`/astro/study`); diverging mean-return bars, sortable; every bucket name is a link into the Day log. **Day log** — the individual days (`/astro/days`): a filter bar (**from / to date**, weekday, month, tithi, paksha, Moon nakshatra, Moon rashi, lagna) whose selections combine, a `summary` strip for the filtered set, and a paged (25/50/100/200) sortable table of date · day · tithi · paksha · nakshatra · Moon · lagna · **dasha @open** (Moon-anchored mahadasha–antardasha lord at session open, balance in the tooltip) · chg % · range %, default sorted by chg % descending. Every date links to the day screen. **Almanac** — every computed day, today onward by default (`/astro/almanac`, left-joined so **future / untraded days appear**): from / to date, a paged table of date · day · tithi · paksha · nakshatra · Moon · lagna · Sun · chg % (or "no candle"). Each date opens the day screen, which shows the full panchang + planets + Shadbala even with no market data. **Dasha** — the Vimshottari 9×9 mahadasha × antardasha grid (`/astro/dasha`): a session-length input (default 390 min, quick 390/400/375 buttons) and a start-lord selector; a scrollable table of MD rows × AD columns where each cell shows the scaled `H:MM:SS` over its year value, the diagonal (period lord's own sub-period) tinted, with a period-total column and a 120-year total row. Pure arithmetic — no chart, no underlying. Table only; labelled "descriptive, not predictive"; no forecast, no execution language. |
-| `/astro/day/:date` | One trading day on one screen (`/astro/days/{d}`, `?underlying=`). Panels: **Market — daily candle** (O/H/L/C, prev close, change %, range %, volume); **Market — intraday** (a **1 hour / 15 min** timeframe dropdown; session bars O/H/L/C + per-bar %, preceded by `SessionDashaPlot` — a rough inline-SVG **open-price line** of the same bars over the Moon-anchored mahadasha bands, antardasha + pratyantar lanes, each mahadasha tagged `H<by-degree>/<whole-sign>` (that lord's house from the lagna) + its approx % move, and a bottom **planet-places lane** (09:00 IST sky as a 0–360° zodiac strip with each graha + the Lagna at its longitude, retrograde flagged, and the running mahadasha lord picked out in amber with a dashed link to the Lagna showing its house count); the one chart in V1, `docs/13` §5.6.1); **Panchang** (weekday + lord, tithi + paksha, Moon rashi/nakshatra/pada, lagna, Sun, sunrise/sunset, ayanamsha); **Dasha — Moon-anchored** (`docs/13` §5.6.1; fetches `/astro/dasha/moon`): an **open-time picker (09:00 / 09:15)** and a **session-length picker (390 / 400 min)** that refetch, then a headline (Moon nakshatra/pada, ruling mahadasha, **that lord's house from the lagna — by exact degree and whole-sign**, % of nakshatra elapsed, balance at open in H:MM:SS + years) and a period table — clock IST · period · **lagna °/w** (each period lord's house from the ascendant, by degree then whole-sign) · duration · = years — with an MD / +AD / +PD depth toggle and the balance period tagged; the pickers shift only the wall-clock labels, not the sky or any duration; labelled "not the 120-year cycle"; **Planets** (sidereal positions — rashi, °, nakshatra + pada + lord, retro, dignity, speed); **Shadbala** (rank, total rupa, ×required, the six balas, ishta/kashta). Empty panels degrade to a note. Descriptive only. |
+| `/astro/day/:date` | One trading day on one screen (`/astro/days/{d}`, `?underlying=`). Panels: **Market — daily candle** (O/H/L/C, prev close, change %, range %, volume); **Market — intraday** (a **1 hour / 15 min** timeframe dropdown; session bars O/H/L/C + per-bar %, preceded by `SessionDashaPlot` — a rough inline-SVG **open-price line** of the same bars over the Moon-anchored mahadasha bands, antardasha + pratyantar lanes, each mahadasha tagged `H<by-degree>/<whole-sign>` (that lord's house from the lagna) + its approx % move, and a bottom **planet-places lane** (09:00 IST sky as a 0–360° zodiac strip with each graha + the Lagna at its longitude, retrograde flagged, and the running mahadasha lord picked out in amber with a dashed link to the Lagna showing its house count); the one chart in V1, `docs/13` §5.6.1); **Panchang** (weekday + lord, tithi + paksha, Moon rashi/nakshatra/pada, lagna, Sun, sunrise/sunset, ayanamsha); **Dasha — Moon-anchored** (`docs/13` §5.6.1; fetches `/astro/dasha/moon`): an **open-time picker (09:00 / 09:15)** and a **session-length picker (390 / 400 min)** that refetch, then a headline (Moon nakshatra/pada, ruling mahadasha, **that lord's house from the lagna — by exact degree and whole-sign**, % of nakshatra elapsed, balance at open in H:MM:SS + years) and a period table — clock IST · period · **lagna °/w** (each period lord's house from the ascendant, by degree then whole-sign) · duration · = years · **% chg** (owner-authorised 2026-09-16 — "the table its self showing the % changes": the index's open→close move over that period's own window, from the day's M5 bars re-based to this panel's own selected session-open, `▲`/`▼` signed, blank when no bar falls inside a short period) — with an MD / +AD / +PD depth toggle and the balance period tagged; the pickers shift only the wall-clock labels, not the sky or any duration; labelled "not the 120-year cycle"; **Planets** (sidereal positions — rashi, °, nakshatra + pada + lord, retro, dignity, speed); **Shadbala** (rank, total rupa, ×required, the six balas, ishta/kashta). Empty panels degrade to a note. Descriptive only. |
 
 Global header: market open/closed (`/calendar/status`), `worker_running`
 indicator, `last_successful_cycle_age`, `calendar_seeded_until` warning when
@@ -132,9 +132,17 @@ auth boundary (a client gate is defeatable — the API itself stays open, decisi
     behavior; option panels show the "positioning in this contract, not the
     underlying" note.
   - Market Profile (SESSION): POC, VAH, VAL, IB high/low, session hi/lo, range,
-    close vs POC/VAH/VAL, in-value-area, shape, `is_session_complete`. `bins[]`
-    rendered as two compact tables (TPO: price | count | one column per period
-    letter; Volume Profile: price | volume) or tabs — **not a chart**.
+    close vs POC/VAH/VAL, in-value-area, shape, `is_session_complete`. **One
+    merged price-row table** (owner-authorised 2026-09-17 — "VOLUME & tpo TWO
+    COLUMN MERGE IT ONE WITH SMALL BAR", replacing the earlier TPO/VOLUME tab
+    switcher): price | IB | one column per period letter | TPO count | a small
+    horizontal **Volume bar** (CSS `<div>` width against the session's busiest
+    price — no chart library, no SVG, still table-only per decision 11), one
+    row per price across the union of both profiles' bins (joined on
+    `price_low` — the two normally share the same grid; a borrowed-FUTURE
+    volume profile, below, can differ by a bin or two). Volume column omitted
+    entirely when `profiles.VOLUME` is absent (rare — see the borrow note
+    below). **Not a chart**.
     **TPO letter grid** (owner-authorised 2026-09-15 — "print pattern like
     abcdefg… dont remove text" → "classic column layout"): each period that
     printed this session (A, B, C…, derived from the bins already on hand, no
@@ -142,6 +150,20 @@ auth boundary (a client gate is defeatable — the API itself stays open, decisi
     traded at, blank otherwise — the busiest (POC) row amber-highlighted. This
     is the original hand-plotted TPO chart, rendered as monospace text —
     horizontally scrollable, still table-only, still no chart library or SVG.
+    **Initial Balance column** (owner-authorised 2026-09-15, "IB TPO need
+    like need" then revised same day — "Price TPO need to column wise IB
+    then A B C D E F like need basic market profile" — then reordered
+    2026-09-16, "IB second column A Third colum B like profile structure?",
+    moving **TPO count to the last column** so the period letters sit right
+    after IB): the TPO table is column-wise **Price | IB | A | B | C … | TPO
+    count**, matching the classic market-profile layout. The dedicated **IB**
+    column is sky-tinted with a left bar on every price row whose
+    `[price_low, price_low+bin_size)` band overlaps `[ib_low, ib_high]` (a
+    value-based overlap test — `ib_periods` isn't exposed by the API, so this
+    reads against the IB price range already shown in the stat grid, not
+    specific period letters); the top/bottom such row reads **`hi`** / **`lo`**
+    (or **`IB`** when the range is one bin), interior rows a **`│`** mark.
+    Frontend-only — no new API field.
     **Session date navigator** (owner-authorised 2026-09-15 — "like this last 3
     day value or 7 days"): a ◀ / date-input / ▶ control in the panel header
     (max = today) pages back through past sessions — `GET .../market-profile`
@@ -154,6 +176,18 @@ auth boundary (a client gate is defeatable — the API itself stays open, decisi
     already-closed historical days keep their `tpo_count` numbers but show no
     letter columns until/unless that day's profile is recomputed — there is no
     backfill job for it yet.
+    **Volume borrowed from the linked FUTURE on an INDEX** (owner-authorised
+    2026-09-17 — "FOR MARKET PROFILE ADD WITH FUTURE VOLUME"): an index has no
+    genuine traded volume, so its own Volume Profile was previously just
+    absent (no volume bars at all) — `GET .../market-profile` now borrows the
+    nearest linked future contract's own already-persisted Volume Profile for
+    the same session when the index has none of its own (`docs/07` §4.4,
+    `docs/05` §10.6). When the merged table's Volume bars are borrowed, an
+    amber **`Volume from <FUTURE-contract-key>`** badge sits above the table
+    (hover for the full disclosure — a disclosed approximation, not the
+    index's own data); absent when `VOLUME` is the instrument's own (e.g. on
+    a FUTURE/OPTION screen, which already have real volume and never needed
+    this).
     Below the tables, an **"Auction events"**
     section (`docs/14`) when `events` is present: a day-type + silhouette badge
     line, then a compact table of `MP-nnn` events sorted by strength — id +
@@ -204,7 +238,12 @@ auth boundary (a client gate is defeatable — the API itself stays open, decisi
   a recent cross takes an **amber** tint + a `● near {50/200} (support|
   resistance)` line under the regime when the last price sits within
   `near_ma_pct` (default 0.3%) of a MA; the Fast/Slow distance cells
-  themselves turn amber-bold when that specific MA is the near one. Dated
+  themselves turn amber-bold when that specific MA is the near one. **EMA row**
+  (owner-authorised 2026-09-16 — "DMA 50 200 like need EMA one box"): one extra
+  row, **EMA (50/200)**, showing the same two periods as an exponential
+  average — `fast_ema / slow_ema` — alongside the DMA (SMA) rows; a reference
+  read only, it doesn't drive the regime/cross/near-MA tints, which stay tied
+  to the configured `ma_type` (default SMA). Dated
   contracts render a single "runs on the INDEX series" note. Read view — not
   scored.
 - **ICT Fair Value Gaps — 5m / 15m / 30m / 1h** (`FvgGridPanel`, below the
@@ -216,6 +255,104 @@ auth boundary (a client gate is defeatable — the API itself stays open, decisi
   array below). The column header shows the `bias` lean + active-gap count and
   tints when price sits inside a gap. 30m folded from 5m. Read view — not scored,
   no BUY/SELL.
+- **Candle Range Theory — 5m / 15m / 30m / 1h** (`CrtGridPanel`, below the
+  FVG grid; non-OPTION, owner-authorised 2026-09-16, `docs/07` §4.24): a
+  4-column table — **reference range** (`low–high`, midpoint, range, an
+  `inside (mother)` tag when the reference candle was a compression candle),
+  **current position** (above high / below low / at midpoint / inside, +
+  last close), **breakout** (▲/▼ high/low break, `close outside` /
+  `closed back inside` / `retested` / `holds` / `vol-confirmed` flags), and
+  **expansion** (points + ×range multiple). The column header tints and
+  labels the plain-language `signal` (bullish/bearish continuation, high/low
+  rejection, range expansion ↑/↓, compression, neutral). 30m folded from 5m.
+  Read view — not scored, no BUY/SELL; explicitly not "green candle =
+  bullish" — the range boundaries and what happens *after* a break are what's
+  shown.
+- **Gann time cycles** (`GannCyclesPanel`, below the CRT panel; non-OPTION,
+  owner-authorised 2026-09-16 — "Gann Days / Gann Time Cycles can we
+  implement in our logic?", clarified as "previous low day and high [day],
+  then low high based on period with gann ideas", `docs/07` §4.25): a
+  **previous swing low** / **previous swing high** card pair (price + date,
+  green/rose), a **confluence clusters** section (amber cards when upcoming
+  — cluster date, days-from-today, contributing cycle count and labels) shown
+  only when 2+ projections converge, and an **all projections** table (date ·
+  cycle e.g. `low + 90d` · anchor date/price · **actual** · days ago/in).
+  **Actual column** (owner-flagged 2026-09-16 — "past data need fill the
+  value"): once a projected date has passed, shows that day's real close +
+  high–low range (a dash while it's still upcoming) — a `· as of {date}`
+  note when the exact date fell on a weekend/holiday and resolved to the
+  next session — so a past Gann date can be checked against what price
+  actually did there. Classic Gann
+  day-count cycles (45/90/120/144/180/270/360 calendar days), not a fixed
+  timeframe grid — one read per instrument off ~1y of daily bars. Read view —
+  not scored, no BUY/SELL; a calendar-date study, not a signal — no entry, no
+  target, no stop.
+- **Gap-fade streak study** (`GapFadeStudyPanel`, below the Gann cycles
+  panel; non-OPTION, owner-authorised 2026-09-16 — "i need to find gapup day
+  and close much lower like days continuos down howmany days when its
+  streak end shortterm consolidation and breakout need find" — explicitly
+  "its not backe test i need to analysis", `docs/07` §4.26): **not a
+  backtest** — a historical study over the full D1 series. **Both reversal
+  directions side by side** (owner-extended 2026-09-17 — "like open low
+  close/open high close actually it represent the reversal"): a
+  **`Gap-up fade — bearish reversal`** box and a **`Gap-down fade — bullish
+  reversal`** box, each with its own 4-stat summary strip (occurrences,
+  median streak, median consolidation, breakout split `N↑/N↓ (X% up)`), a
+  **streak length — how often** histogram (chips, `Nd × count`), and an
+  **every occurrence** table (event date · gap%/close% · streak days · box
+  range · days in box · outcome, colour-coded broke-up/broke-down/still-
+  consolidating/too-recent, breakout date shown inline) — filtered to that
+  direction. Header carries one **± magnitude pair** of threshold inputs
+  (`gap ≥ __%` / `close ≥ __%, either way`) applied symmetrically to both
+  directions, rather than four separate inputs. Owner picked the
+  **simple box** consolidation method (a fixed high/low band from the days
+  right after the streak ends) over an ATR-squeeze alternative, and
+  **close-breaks-the-box-by-a-buffer** for the breakout trigger over a bare
+  box-touch — both apply the same way regardless of which direction
+  triggered the occurrence. Read view — not scored; descriptive only, no
+  entry, no target, no stop, no hit-rate against a simulated trade.
+- **Economic event calendar** (`EventCalendarPanel`, below the Gap-fade
+  panel; non-OPTION, owner-authorised 2026-09-16 — "news driven i need
+  basic news like fed powell and Auto sale and indian Gst... predefined
+  news... calander based on the calander view... previous close - today
+  close", clarified across follow-ups to **not live news** (recurring-date
+  rules only) and confirmed the price read is against the NSE instrument on
+  screen, not gold/silver/bonds, `docs/07` §4.27): an actual **month-grid
+  calendar** (Mon-Sun columns, prev/next/today navigation) — the one other
+  grid-shaped, non-tabular read view in the app besides the Market Profile
+  TPO letter grid, still not a chart. An **11-card** summary strip (one per
+  event type: occurrences with data, median move, notable-move % + up/down
+  split, or "no historical data available" for `FNO_EXPIRY`). Each calendar
+  day carries a small colour-coded badge per event on it (**Jobs** sky,
+  **Claims** cyan, **GST** violet, **Fed** rose, **ECB** indigo, **RBI**
+  fuchsia, **F&O Exp** amber, **MCX Gold** yellow, **MCX Silver** slate,
+  **COMEX Gold** orange, **COMEX Silver** stone) with the day's `change_pct` inline once resolved,
+  a dash while still upcoming; today's cell is tinted. Event types: **US
+  jobs report** (1st Friday/month), **US jobless claims** (owner-authorised
+  2026-09-17 — cross-checked against investing.com's own economic calendar
+  as a genuine high-impact weekly release; every Thursday, no approximation
+  needed), **India GST collection** (~1st/month, from 2017-07-01),
+  **MCX gold/silver expiry** (5th-of-month rule, approximated against NSE
+  trading days — no MCX holiday calendar, but MCX/NSE share Indian
+  holidays), and **COMEX gold/silver expiry** (owner-authorised 2026-09-17
+  — "US gold expiry?"; a cruder 27th-of-month rule-of-thumb, since COMEX
+  and NSE share no holiday calendar at all — disclosed and accepted before
+  building) are fully backfilled across all available history.
+  **Fed/ECB/RBI rate decisions** (owner-authorised 2026-09-16/17 — "fed rate
+  decision not coming" / following the owner's investing.com reference /
+  RBI flagged 🔴 very high priority in the owner's events-priority list) are
+  small hand-maintained seed lists — 2023-2025 from training knowledge at
+  moderate confidence (Fed additionally has owner-confirmed 2026 entries,
+  e.g. 2026-09-16 after the owner reported "Fed rate decision yesterday but
+  its not showing"; RBI is bi-monthly, 6/year vs. Fed/ECB's 8) — never
+  guessed for 2026+ on any of the three lists, disclosed in the panel's own
+  intro paragraph, since these are committee-set dates and no formula can
+  generate them. **Monthly F&O expiry** shows on the calendar
+  (current + next contract, exact dates) but carries no historical stats —
+  the instruments table doesn't retain expired contracts and NSE's expiry
+  weekday has changed over the years, disclosed the same way rather than
+  silently shown as a thin/misleading sample. Read view — not scored;
+  anticipatory context from real history, no entry, no target, no stop.
 - **CPR & pivots** (`PivotsPanel`, below Key levels; **all instrument types**,
   `docs/07` §4.18): three columns **Daily / Weekly / Monthly**, each with a
   **Now** and a **Next** R3→S3 level ladder (price · signed distance vs last

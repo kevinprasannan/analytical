@@ -172,18 +172,42 @@ export function MarketProfilePanel({
   const mp = browsing ? histQ.data : latest;
   const today = isoDate(new Date());
 
-  const types = mp ? Object.keys(mp.profiles) : [];
-  const [tab, setTab] = useState(types[0] ?? "TPO");
-  const bins = (mp?.profiles[tab]?.bins ?? []) as Record<string, number | string>[];
-  const isTpo = tab === "TPO";
-  // every period letter that printed this session, chronological (A<B<...<Z<a<b<...)
-  // — this is the classic TPO chart's column axis, derived purely from the bins
-  // already on hand (no extra API field needed).
-  const periodAxis = isTpo
-    ? Array.from(
-        new Set(bins.flatMap((b) => (typeof b.letters === "string" ? b.letters.split("") : []))),
-      ).sort()
-    : [];
+  // TPO and Volume Profile merged into one price-row table (owner: "VOLUME &
+  // tpo TWO COLUMN MERGE IT ONE WITH SMALL BAR") — was two tab-switched
+  // renderings of the same table; now both render together per price row,
+  // joined on `price_low` (both share the session's bin grid, except a
+  // borrowed-FUTURE volume profile — §11.4 — which can differ by a bin or two).
+  const tpoBins = (mp?.profiles.TPO?.bins ?? []) as Record<string, number | string>[];
+  const volBins = (mp?.profiles.VOLUME?.bins ?? []) as Record<string, number | string>[];
+  // the traditional hand-drawn TPO chart: each price row lists just the periods
+  // that traded there (already chronological — A<B<...<Z<a<b<...), packed left —
+  // column position is a print slot, not a fixed period. maxPrints sizes the
+  // widest row so every row's columns line up.
+  const maxPrints = Math.max(
+    0,
+    ...tpoBins.map((b) => (typeof b.letters === "string" ? b.letters.length : 0)),
+  );
+
+  const tpoByPrice = new Map(tpoBins.map((b) => [Number(b.price_low), b]));
+  const volByPrice = new Map(volBins.map((b) => [Number(b.price_low), Number(b.volume)]));
+  const priceRows = Array.from(
+    new Set([...tpoByPrice.keys(), ...volByPrice.keys()]),
+  ).sort((a, b) => b - a);
+  const maxVolume = Math.max(0, ...volByPrice.values());
+
+  // Initial Balance band — every bin whose price range overlaps [ib_low, ib_high]
+  // (a value-based overlap test, since ib_high/ib_low are the session's raw first-
+  // periods extremes, not necessarily bin-aligned). Read against price, not
+  // against specific period letters, since the API doesn't expose `ib_periods`.
+  const ibHigh = mp?.ib_high ?? null;
+  const ibLow = mp?.ib_low ?? null;
+  const binSize = mp?.bin_size ?? 0;
+  const ibPrices =
+    ibHigh != null && ibLow != null
+      ? priceRows.filter((p) => p + binSize > ibLow && p <= ibHigh)
+      : [];
+  const ibTop = ibPrices.length ? Math.max(...ibPrices) : null;
+  const ibBottom = ibPrices.length ? Math.min(...ibPrices) : null;
 
   // the date the nav controls are anchored on — the picked date while browsing,
   // else the latest session (so the input always shows something meaningful)
@@ -266,62 +290,111 @@ export function MarketProfilePanel({
         />
 
         <div>
-          <div className="mb-2 flex gap-1 text-xs">
-            {types.map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`rounded px-2 py-0.5 ${t === tab ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"}`}
+          {mp.volume_source === "FUTURE" && volByPrice.size > 0 && (
+            <div className="mb-2 flex items-center gap-1 text-xs">
+              <span
+                className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800"
+                title={`${mp.session_date}'s index has no traded volume of its own (it's a calculated value, not something bought/sold) — the Volume bar below is the linked future contract's own Volume Profile for the same session, approximate against the index's own price grid.`}
               >
-                {t}
-              </button>
-            ))}
-          </div>
+                Volume from {mp.volume_source_contract_key}
+              </span>
+            </div>
+          )}
           <div className="max-h-72 overflow-auto rounded border border-slate-200">
-            <table className="text-xs">
+            <table className="w-full text-xs">
               <thead className="sticky top-0 bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-2 py-1 text-left">Price</th>
-                  <th className="px-2 py-1 text-right">{isTpo ? "TPO count" : "Volume"}</th>
-                  {periodAxis.map((letter) => (
-                    <th key={letter} className="w-5 px-0 py-1 text-center font-normal">
-                      {letter}
+                  <th className="w-8 px-0 py-1 text-center font-normal">IB</th>
+                  {Array.from({ length: maxPrints }, (_, idx) => (
+                    <th key={idx} className="w-5 px-0 py-1 text-center font-normal text-slate-300">
+                      ·
                     </th>
                   ))}
+                  <th className="px-2 py-1 text-right">TPO</th>
+                  {volByPrice.size > 0 && (
+                    <th className="px-2 py-1 text-left">Volume</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
-                {[...bins].reverse().map((b, i) => {
-                  const isPoc = isTpo && mp.poc != null && b.price_low === mp.poc;
-                  const letters = typeof b.letters === "string" ? b.letters : "";
+                {priceRows.map((priceLow) => {
+                  const tb = tpoByPrice.get(priceLow);
+                  const isPoc = mp.poc != null && priceLow === mp.poc;
+                  const inIb = ibPrices.includes(priceLow);
+                  const letters = typeof tb?.letters === "string" ? tb.letters : "";
+                  const vol = volByPrice.get(priceLow);
+                  const volPct = vol != null && maxVolume > 0 ? (vol / maxVolume) * 100 : 0;
+                  const ibMark =
+                    priceLow === ibTop && priceLow === ibBottom
+                      ? "IB"
+                      : priceLow === ibTop
+                        ? "hi"
+                        : priceLow === ibBottom
+                          ? "lo"
+                          : inIb
+                            ? "│"
+                            : "";
                   return (
-                    <tr key={i} className={isPoc ? "bg-amber-50" : ""}>
+                    <tr key={priceLow} className={isPoc ? "bg-amber-50" : ""}>
                       <td className={`px-2 py-0.5 ${isPoc ? "font-semibold text-amber-800" : ""}`}>
-                        {price(b.price_low)}
+                        {price(priceLow)}
                         {isPoc && <span className="ml-1 text-[10px] text-amber-600">POC</span>}
                       </td>
-                      <td className="px-2 py-0.5 text-right">
-                        {isTpo ? num(b.tpo_count, 0) : num(b.volume, 0)}
+                      <td
+                        className={`w-8 px-0 py-0.5 text-center text-[10px] ${
+                          inIb ? "bg-sky-50 font-semibold text-sky-700" : ""
+                        }`}
+                      >
+                        {ibMark}
                       </td>
-                      {periodAxis.map((letter) => (
-                        <td key={letter} className="w-5 px-0 py-0.5 text-center text-slate-700">
-                          {letters.includes(letter) ? letter : ""}
+                      {Array.from({ length: maxPrints }, (_, idx) => (
+                        <td key={idx} className="w-5 px-0 py-0.5 text-center text-slate-700">
+                          {letters[idx] ?? ""}
                         </td>
                       ))}
+                      <td className="px-2 py-0.5 text-right">
+                        {tb ? num(tb.tpo_count, 0) : ""}
+                      </td>
+                      {volByPrice.size > 0 && (
+                        <td className="px-2 py-0.5">
+                          {vol != null && (
+                            <div className="flex items-center gap-1.5">
+                              <div className="h-2.5 w-16 overflow-hidden rounded-sm bg-slate-100">
+                                <div
+                                  className="h-full rounded-sm bg-indigo-300"
+                                  style={{ width: `${Math.max(volPct, vol > 0 ? 3 : 0)}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-slate-500">{num(vol, 0)}</span>
+                            </div>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          {isTpo && (
-            <p className="mt-1 text-[11px] text-slate-400">
-              Each column (A, B, C…) is one period — scroll right for the full session. A letter
-              prints where that period traded, blank where it didn't; scan down any column-set and
-              the filled cells trace the session's profile shape (bell / P / b), the same read as
-              the original hand-plotted TPO chart, just in text. <b>POC</b> = the busiest price.
-            </p>
-          )}
+          <p className="mt-1 text-[11px] text-slate-400">
+            Columns left to right: <b>Price</b>, <b>IB</b>, then each row's own periods packed
+            left (the traditional hand-drawn TPO chart — a price row that traded during periods
+            B, E and F shows <span className="font-mono">B E F</span> in its first three print
+            columns, in order; a column's position is just a print slot, not a fixed period, so
+            the same column can hold different letters on different rows), then{" "}
+            <b>TPO</b> count, then a small <b>Volume</b> bar (scaled to the session's busiest
+            price, owner: "VOLUME &amp; tpo TWO COLUMN MERGE IT ONE WITH SMALL BAR"). Scan the
+            shape of the filled columns down the price axis and it traces the session's profile
+            (bell / P / b). <b>POC</b> = the busiest TPO price. The <b>IB</b> column marks the{" "}
+            <b>Initial Balance</b> range — the range set by the opening periods, a common gauge
+            for whether the rest of the session stays inside it or extends beyond: <b>hi</b> /{" "}
+            <b>lo</b> at its top/bottom price,{" "}
+            <span className="rounded bg-sky-50 px-1 text-sky-700 border-l-2 border-sky-400">
+              │
+            </span>{" "}
+            through the range between.
+          </p>
         </div>
       </div>
 

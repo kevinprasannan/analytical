@@ -31,6 +31,10 @@ class GoldenCrossColumn(BaseModel):
     near_slow: bool = False
     nearest_ma: str | None = None  # FAST | SLOW — whichever is near, nearer wins
     nearest_ma_side: str | None = None  # SUPPORT (MA below price) | RESISTANCE (above)
+    # the same fast/slow periods, computed as EMA regardless of ma_type — a
+    # second read alongside the DMA cross, not a second cross-state
+    ema_fast: float | None = None
+    ema_slow: float | None = None
 
 
 class GoldenCrossGridResponse(BaseModel):

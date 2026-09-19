@@ -761,15 +761,36 @@ def score_detail(db: Session, instrument_id: int, timeframe: Timeframe):
 
 
 def market_profile_view(db: Session, instrument_id: int, session_date, profile_type: str | None):
-    q = select(m.MarketProfileSession).where(
-        m.MarketProfileSession.instrument_id == instrument_id,
-        m.MarketProfileSession.session_date == session_date,
+    # fetch unfiltered first -- the FUTURE-volume borrow below needs to run even
+    # when the caller asked for `profile_type=VOLUME` specifically (an INDEX with
+    # no own VOLUME row would otherwise come back empty before the borrow ever runs)
+    rows = list(
+        db.execute(
+            select(m.MarketProfileSession).where(
+                m.MarketProfileSession.instrument_id == instrument_id,
+                m.MarketProfileSession.session_date == session_date,
+            )
+        ).scalars()
     )
-    if profile_type is not None:
-        q = q.where(m.MarketProfileSession.profile_type == profile_type)
-    rows = list(db.execute(q).scalars())
+
+    volume_source, volume_source_contract_key = None, None
+    if (
+        rows  # only borrow onto a session the index itself actually has (e.g. a TPO row)
+        and profile_type in (None, "VOLUME")
+        and not any(r.profile_type.value == "VOLUME" for r in rows)
+    ):
+        vp, contract_key = _borrowed_future_volume_profile(db, instrument_id, session_date)
+        if vp is not None:
+            rows = [*rows, vp]
+            volume_source, volume_source_contract_key = "FUTURE", contract_key
+
     if not rows:
         return None
+    if profile_type is not None:
+        rows = [r for r in rows if r.profile_type.value == profile_type]
+        if not rows:
+            return None
+
     # close_* live on the analysis_results market_profile row for the session
     ar = db.execute(
         select(m.AnalysisResultRow.result)
@@ -782,7 +803,50 @@ def market_profile_view(db: Session, instrument_id: int, session_date, profile_t
         .limit(1)
     ).scalar_one_or_none()
     close_vals = (ar or {}).get("values", {}) if ar else {}
-    return rows, close_vals
+
+    return rows, close_vals, volume_source, volume_source_contract_key
+
+
+def _borrowed_future_volume_profile(db: Session, instrument_id: int, session_date):
+    """An INDEX has no genuine traded volume (it is a calculated value, not
+    something bought/sold), so its own Volume Profile is never built — see
+    ``analytical_core.market_profile.engine.build_profile``, which returns
+    ``None`` whenever total volume for the session is 0. Owner-authorised
+    2026-09-17 ("FOR MARKET PROFILE ADD WITH FUTURE VOLUME"): when viewing an
+    INDEX with no VOLUME row for the session, borrow the nearest linked
+    FUTURE contract's own **already-persisted** Volume Profile for the same
+    session date, if one exists — no new computation, just a second lookup
+    against data the regular cycle already builds for the future (futures
+    trade with real volume). Approximate: the future's own price grid can sit
+    a small basis away from the index's, so this is disclosed to the caller
+    via the source contract key, never presented as the index's native
+    volume. Returns ``(None, None)`` if the instrument isn't an INDEX, has no
+    linked FUTURE, or that FUTURE has no VOLUME row for this session."""
+    inst = db.get(m.Instrument, instrument_id)
+    if inst is None or inst.instrument_type != InstrumentType.INDEX:
+        return None, None
+    futures = db.execute(
+        select(m.Instrument.id, m.Instrument.contract_key, m.Instrument.expiry_date)
+        .where(
+            m.Instrument.instrument_type == InstrumentType.FUTURE,
+            m.Instrument.underlying_id == instrument_id,
+            m.Instrument.expiry_date.is_not(None),
+        )
+        .order_by(m.Instrument.expiry_date.asc())
+    ).all()
+    if not futures:
+        return None, None
+    near = next((f for f in futures if f.expiry_date >= session_date), futures[0])
+    vp = db.execute(
+        select(m.MarketProfileSession).where(
+            m.MarketProfileSession.instrument_id == near.id,
+            m.MarketProfileSession.session_date == session_date,
+            m.MarketProfileSession.profile_type == "VOLUME",
+        )
+    ).scalar_one_or_none()
+    if vp is None:
+        return None, None
+    return vp, near.contract_key
 
 
 def latest_market_profile_date(db: Session, instrument_id: int):
@@ -819,19 +883,41 @@ def _utc():
 # ======================================================================================
 
 
-def option_expiries(db: Session, underlying_id: int) -> list:
-    return list(
-        db.execute(
-            select(m.Instrument.expiry_date)
-            .where(
-                m.Instrument.instrument_type == InstrumentType.OPTION,
-                m.Instrument.underlying_id == underlying_id,
-                m.Instrument.expiry_date.is_not(None),
-            )
-            .distinct()
-            .order_by(m.Instrument.expiry_date)
-        ).scalars()
+def option_expiries(db: Session, underlying_id: int, *, only_tracked: bool = False) -> list:
+    """Every distinct option expiry ever seen for ``underlying_id``, ascending.
+
+    ``only_tracked=True`` restricts to expiries that still have at least one
+    ``is_tracked`` option instrument — the universe roll periodically drops a
+    just-expired week's contracts from tracking (`app.instruments.roll`), but
+    their rows (and stale OI/price history) stay in the table. Used by the
+    "auto-pick the near expiry" call sites so they don't keep pointing at an
+    expiry whose ingestion has already stopped."""
+    stmt = select(m.Instrument.expiry_date).where(
+        m.Instrument.instrument_type == InstrumentType.OPTION,
+        m.Instrument.underlying_id == underlying_id,
+        m.Instrument.expiry_date.is_not(None),
     )
+    if only_tracked:
+        stmt = stmt.where(m.Instrument.is_tracked.is_(True))
+    return list(db.execute(stmt.distinct().order_by(m.Instrument.expiry_date)).scalars())
+
+
+def _pick_near_expiry(db: Session, underlying_id: int, reference_date, expiries: list):
+    """The auto-picked "near" expiry for ``option_chain``/``oi_pulse``/
+    ``oi_mover_ltp_trace`` when the caller doesn't name one explicitly.
+    Prefers an expiry that still has at least one currently-tracked option
+    instrument (owner-flagged 2026-09-17 — "SENSEX SHOWING 11:45 AM ONLY?"):
+    SENSEX's own weekly expiry landed on that trading day, and once those
+    contracts rolled off ``is_tracked`` mid-session, this picker kept
+    choosing that now-frozen expiry anyway — its rows are still returned by
+    ``option_expiries()`` — so every reading silently came from data that
+    stopped updating the moment of the roll, not "now". Falls back to
+    ``expiries`` (every expiry ever seen, tracked or not) only if nothing at
+    all is tracked for this underlying."""
+    tracked = option_expiries(db, underlying_id, only_tracked=True)
+    if tracked:
+        return next((e for e in tracked if e >= reference_date), tracked[-1])
+    return next((e for e in expiries if e >= reference_date), expiries[-1])
 
 
 def option_chain(db: Session, underlying_id: int, *, expiry=None, provider: str | None = None):
@@ -853,7 +939,7 @@ def option_chain(db: Session, underlying_id: int, *, expiry=None, provider: str 
         return None
     if expiry is None:
         today = datetime.now(tz=_utc()).date()
-        expiry = next((e for e in expiries if e >= today), expiries[-1])
+        expiry = _pick_near_expiry(db, underlying_id, today, expiries)
     elif expiry not in expiries:
         return None
 
@@ -1220,7 +1306,7 @@ def oi_pulse(
         return None
     now = _dt.now(tz=_utc())
     if expiry is None:
-        expiry = next((e for e in expiries if e >= now.date()), expiries[-1])
+        expiry = _pick_near_expiry(db, underlying_id, now.date(), expiries)
     elif expiry not in expiries:
         return None
 
@@ -1329,6 +1415,159 @@ def oi_pulse(
     )
 
 
+def oi_ladder(
+    db: Session,
+    underlying_id: int,
+    *,
+    marks: int = 3,
+    step_min: int = 1,
+    window_up: int | None = 6,
+    window_down: int | None = 6,
+    provider: str | None = None,
+):
+    """Per-strike CE/PE OI-change ladder across ``marks`` recent
+    ``step_min``-spaced time columns — a classic CE | strike | PE option-
+    chain layout, but each cell is that strike/side's OI **change since the
+    column before it**, not a snapshot (owner: "OI Delta only that time
+    change only ... like this one more display option in LTP Trace" / OI
+    movers). Options only; near expiry only (same resolution as
+    ``oi_pulse``). ``None`` if the underlying has no options / no spot."""
+    from datetime import datetime as _dt
+
+    from analytical_core.options import OiLegSeries, build_oi_ladder
+    from app.config import get_settings
+    from app.ingestion.session import IST, nse_session_window, trading_date_of
+
+    under = db.get(m.Instrument, underlying_id)
+    if under is None:
+        return None
+    provider = provider or get_settings().active_provider
+
+    expiries = option_expiries(db, underlying_id)
+    if not expiries:
+        return None
+    now = _dt.now(tz=_utc())
+    expiry = _pick_near_expiry(db, underlying_id, now.date(), expiries)
+
+    opts = list(
+        db.execute(
+            select(m.Instrument.id, m.Instrument.strike_price, m.Instrument.option_type).where(
+                m.Instrument.instrument_type == InstrumentType.OPTION,
+                m.Instrument.underlying_id == underlying_id,
+                m.Instrument.expiry_date == expiry,
+            )
+        )
+    )
+    if not opts:
+        return None
+    opt_ids = [o.id for o in opts]
+
+    spot_row = db.execute(
+        select(m.OhlcvBar.close)
+        .where(
+            m.OhlcvBar.instrument_id == underlying_id,
+            m.OhlcvBar.timeframe.in_((Timeframe.M1, Timeframe.M5)),
+            m.OhlcvBar.provider == provider,
+        )
+        .order_by(m.OhlcvBar.ts.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if spot_row is None:
+        return None
+    spot = float(spot_row)
+
+    window = nse_session_window(trading_date_of(now.astimezone(IST)))
+    session_open = min(window.open_utc, now - timedelta(hours=1))
+
+    oi_series: dict[int, list[tuple]] = {i: [] for i in opt_ids}
+    for iid, ts, oi in db.execute(
+        select(m.OpenInterest.instrument_id, m.OpenInterest.ts, m.OpenInterest.oi)
+        .where(
+            m.OpenInterest.instrument_id.in_(opt_ids),
+            m.OpenInterest.provider == provider,
+            m.OpenInterest.ts >= session_open,
+        )
+        .order_by(m.OpenInterest.instrument_id, m.OpenInterest.ts)
+    ):
+        oi_series[iid].append((ts.astimezone(UTC), int(oi)))
+
+    # each option's own premium — cell hover context only (owner: "add
+    # option price also"), same M1-close lookup oi_pulse already does
+    px_series: dict[int, list[tuple]] = {i: [] for i in opt_ids}
+    for iid, ts, close in db.execute(
+        select(m.OhlcvBar.instrument_id, m.OhlcvBar.ts, m.OhlcvBar.close)
+        .where(
+            m.OhlcvBar.instrument_id.in_(opt_ids),
+            m.OhlcvBar.timeframe == Timeframe.M1,
+            m.OhlcvBar.provider == provider,
+            m.OhlcvBar.ts >= session_open,
+        )
+        .order_by(m.OhlcvBar.instrument_id, m.OhlcvBar.ts)
+    ):
+        px_series[iid].append((ts.astimezone(UTC), float(close)))
+
+    legs = [
+        OiLegSeries(
+            strike=float(strike),
+            option_type=otype.value if hasattr(otype, "value") else str(otype),
+            oi=tuple(oi_series[iid]),
+            premium=tuple(px_series[iid]),
+        )
+        for iid, strike, otype in opts
+        if strike is not None
+    ]
+
+    n_marks = max(2, int(marks))
+    step = timedelta(minutes=max(1, int(step_min)))
+    last_mark = min(now, window.close_utc)
+    mark_times = tuple(last_mark - step * i for i in range(n_marks - 1, -1, -1))
+
+    # the underlying's own LTP at/before each mark — column-header hover
+    # context only (owner: "mouse hover can we show price"), same lookup
+    # convention as every other price/OI trace in this module
+    underlying_series = tuple(
+        (ts.astimezone(UTC), float(close))
+        for ts, close in db.execute(
+            select(m.OhlcvBar.ts, m.OhlcvBar.close)
+            .where(
+                m.OhlcvBar.instrument_id == underlying_id,
+                m.OhlcvBar.timeframe == Timeframe.M1,
+                m.OhlcvBar.provider == provider,
+                m.OhlcvBar.ts >= session_open,
+            )
+            .order_by(m.OhlcvBar.ts)
+        )
+    )
+
+    ladder = build_oi_ladder(
+        legs,
+        mark_times,
+        spot,
+        window_up=window_up,
+        window_down=window_down,
+        underlying_series=underlying_series,
+    )
+    return {
+        "underlying_id": underlying_id,
+        "underlying_symbol": under.symbol,
+        "spot": spot,
+        "expiry": expiry.isoformat(),
+        "as_of": now.isoformat(),
+        "step_min": int(step_min),
+        "marks": list(ladder.marks),
+        "atm_strike": ladder.atm_strike,
+        "underlying_at_marks": list(ladder.underlying_at_marks),
+        "rows": [
+            {
+                "strike": r.strike,
+                "call": [{"oi": c.oi, "oi_delta": c.oi_delta, "ltp": c.ltp} for c in r.call],
+                "put": [{"oi": c.oi, "oi_delta": c.oi_delta, "ltp": c.ltp} for c in r.put],
+            }
+            for r in ladder.rows
+        ],
+    }
+
+
 # ======================================================================================
 # big OI movement — options only (docs/07 §4.22, docs/05 §11.4)
 # ======================================================================================
@@ -1396,8 +1635,8 @@ def oi_movers(
     """The biggest OI adds / drops across the near-expiry option strikes for
     ``underlying_id`` (docs/05 §11.4). Built on ``oi_pulse``. Options only.
 
-    ``recent_window_min`` is the time band for the `Δ recent` column (3 / 5 / 10
-    / 15). ``moneyness`` restricts to those buckets (``DEEP_ITM`` / ``ITM`` /
+    ``recent_window_min`` is the time band for the `Δ recent` column (1 / 3 /
+    5 / 10 / 15). ``moneyness`` restricts to those buckets (``DEEP_ITM`` / ``ITM`` /
     ``ATM`` / ``OTM`` / ``DEEP_OTM``) before the top-N split. Returns ``None`` if
     the underlying has no options / no spot."""
     pulse = oi_pulse(db, underlying_id, provider=provider, recent_window_min=recent_window_min)
@@ -1443,6 +1682,118 @@ def oi_movers(
         "added": added,
         "reduced": reduced,
         "oi_pulse_version": pulse.oi_pulse_version,
+    }
+
+
+def oi_mover_ltp_trace(
+    db: Session,
+    underlying_id: int,
+    *,
+    strike: float,
+    option_type: str,
+    provider: str | None = None,
+):
+    """One strike's session premium (LTP), its own OI, and the underlying's
+    LTP, all at the same instants — a raw time/price/OI trace for the
+    near-expiry option a big OI mover flagged, so a build-up's OI and premium
+    can be read against what the underlying actually did at each tick (owner:
+    watching a crowded strike for where it "finds liquidity"). No indicator,
+    no label, options only.
+
+    ``None`` if the underlying has no options / no spot / no option instrument
+    matching ``(strike, option_type)`` on the resolved near expiry."""
+    from datetime import datetime as _dt
+
+    from analytical_core.options import build_ltp_trace
+    from app.config import get_settings
+    from app.ingestion.session import IST, nse_session_window, trading_date_of
+
+    under = db.get(m.Instrument, underlying_id)
+    if under is None:
+        return None
+    provider = provider or get_settings().active_provider
+
+    expiries = option_expiries(db, underlying_id)
+    if not expiries:
+        return None
+    now = _dt.now(tz=_utc())
+    expiry = _pick_near_expiry(db, underlying_id, now.date(), expiries)
+
+    option_type = option_type.upper()
+    opt = db.execute(
+        select(m.Instrument.id).where(
+            m.Instrument.instrument_type == InstrumentType.OPTION,
+            m.Instrument.underlying_id == underlying_id,
+            m.Instrument.expiry_date == expiry,
+            m.Instrument.strike_price == strike,
+            m.Instrument.option_type == option_type,
+        )
+    ).scalar_one_or_none()
+    if opt is None:
+        return None
+
+    window = nse_session_window(trading_date_of(now.astimezone(IST)))
+    session_open = min(window.open_utc, now - timedelta(hours=1))
+
+    option_premium = tuple(
+        (ts.astimezone(UTC), float(close))
+        for ts, close in db.execute(
+            select(m.OhlcvBar.ts, m.OhlcvBar.close)
+            .where(
+                m.OhlcvBar.instrument_id == opt,
+                m.OhlcvBar.timeframe == Timeframe.M1,
+                m.OhlcvBar.provider == provider,
+                m.OhlcvBar.ts >= session_open,
+            )
+            .order_by(m.OhlcvBar.ts)
+        )
+    )
+    spot_series = tuple(
+        (ts.astimezone(UTC), float(close))
+        for ts, close in db.execute(
+            select(m.OhlcvBar.ts, m.OhlcvBar.close)
+            .where(
+                m.OhlcvBar.instrument_id == underlying_id,
+                m.OhlcvBar.timeframe == Timeframe.M1,
+                m.OhlcvBar.provider == provider,
+                m.OhlcvBar.ts >= session_open,
+            )
+            .order_by(m.OhlcvBar.ts)
+        )
+    )
+    oi_series = tuple(
+        (ts.astimezone(UTC), int(oi))
+        for ts, oi in db.execute(
+            select(m.OpenInterest.ts, m.OpenInterest.oi)
+            .where(
+                m.OpenInterest.instrument_id == opt,
+                m.OpenInterest.provider == provider,
+                m.OpenInterest.ts >= session_open,
+            )
+            .order_by(m.OpenInterest.ts)
+        )
+    )
+
+    trace = build_ltp_trace(option_premium, spot_series, oi_series)
+    return {
+        "underlying_id": underlying_id,
+        "underlying_symbol": under.symbol,
+        "option_instrument_id": opt,
+        "strike": strike,
+        "option_type": option_type,
+        "expiry": expiry.isoformat(),
+        "as_of": now.isoformat(),
+        "session_open": session_open.isoformat(),
+        "series": [
+            {
+                "ts": p.ts,
+                "option_ltp": p.option_ltp,
+                "underlying_ltp": p.underlying_ltp,
+                "oi": p.oi,
+                "oi_change": p.oi_change,
+            }
+            for p in trace
+        ],
     }
 
 
@@ -2440,6 +2791,350 @@ def key_levels(
 
 
 # ======================================================================================
+# Gann time cycles (docs/07 §4.25, docs/05 §9e)
+# ======================================================================================
+#
+# Day-count projections (45/90/120/144/180/270/360 calendar days by default)
+# from the previous swing low and swing high over a ~1y daily lookback, plus
+# confluence clusters where several projections land close together. Pure
+# math in analytical_core.gann_cycles.scan_gann_cycles; computed on read, not
+# persisted, not scored. INDEX + FUTURE only (dated contracts don't carry
+# enough D1 history for a meaningful year-long lookback).
+
+_GANN_CYCLES_VERSION_FALLBACK = "0.1.0"
+
+
+def gann_cycles(db: Session, instrument_id: int):
+    """Gann time-cycle day-count projections from the prior swing low/high
+    (docs/05 §9e). Returns ``None`` on an unknown id."""
+    from analytical_core.enums import InstrumentType
+    from analytical_core.gann_cycles import GANN_CYCLES_VERSION, scan_gann_cycles
+    from app.ingestion.session import trading_date_of
+
+    inst = get_instrument(db, instrument_id)
+    if inst is None:
+        return None
+
+    base = {
+        "instrument_id": instrument_id,
+        "contract_key": inst.contract_key,
+        "instrument_type": inst.instrument_type.value,
+        "generated_at": datetime.now(tz=_utc()).isoformat(),
+        "gann_cycles_version": GANN_CYCLES_VERSION,
+    }
+    if inst.instrument_type not in (InstrumentType.INDEX, InstrumentType.FUTURE):
+        return {
+            **base,
+            "status": "NOT_APPLICABLE",
+            "reason": "Gann time cycles run on INDEX / FUTURE only (docs/04 §4)",
+            "swing_low": None,
+            "swing_high": None,
+            "projections": [],
+            "clusters": [],
+        }
+
+    rows = db.execute(
+        select(m.OhlcvBar.ts, m.OhlcvBar.high, m.OhlcvBar.low, m.OhlcvBar.close)
+        .where(
+            m.OhlcvBar.instrument_id == instrument_id,
+            m.OhlcvBar.timeframe == Timeframe.D1,
+        )
+        .order_by(m.OhlcvBar.ts.desc())
+        .limit(300)
+    ).all()
+    if not rows:
+        return {
+            **base,
+            "status": "INSUFFICIENT_DATA",
+            "reason": "no D1 bars ingested",
+            "swing_low": None,
+            "swing_high": None,
+            "projections": [],
+            "clusters": [],
+        }
+    rows = list(reversed(rows))
+    dates = [trading_date_of(r.ts).isoformat() for r in rows]
+    highs = [float(r.high) for r in rows]
+    lows = [float(r.low) for r in rows]
+    closes = [float(r.close) for r in rows]
+    today = trading_date_of(datetime.now(tz=_utc())).isoformat()
+
+    result = scan_gann_cycles(dates, highs, lows, closes, today=today)
+    return {**base, **_dc_asdict(result)}
+
+
+# ======================================================================================
+# Gap-fade streak study (docs/07 §4.26, docs/05 §9f)
+# ======================================================================================
+#
+# Not a backtest (no entry/exit/target/stop) — a descriptive historical study:
+# every day that gapped up and still closed down (the same threshold shape as
+# the Daily Digest gap filter) gets its down-streak measured, the
+# consolidation box that follows found, and the eventual breakout direction
+# recorded — aggregated across the whole available history. Pure math in
+# analytical_core.gap_fade_study.scan_gap_fade_study; computed on read, not
+# persisted, not scored. INDEX + FUTURE only.
+
+
+def gap_fade_study(db: Session, instrument_id: int, **overrides):
+    """Gap-fade streak/consolidation/breakout study, both reversal directions
+    (docs/05 §9f). Returns ``None`` on an unknown id."""
+    from analytical_core.enums import InstrumentType
+    from analytical_core.gap_fade_study import GAP_FADE_STUDY_VERSION, scan_gap_fade_study
+    from app.ingestion.session import trading_date_of
+
+    inst = get_instrument(db, instrument_id)
+    if inst is None:
+        return None
+
+    params = {k: v for k, v in overrides.items() if v is not None}
+
+    base = {
+        "instrument_id": instrument_id,
+        "contract_key": inst.contract_key,
+        "instrument_type": inst.instrument_type.value,
+        "generated_at": datetime.now(tz=_utc()).isoformat(),
+        "params": params,
+        "gap_fade_study_version": GAP_FADE_STUDY_VERSION,
+    }
+    if inst.instrument_type not in (InstrumentType.INDEX, InstrumentType.FUTURE):
+        return {
+            **base,
+            "status": "NOT_APPLICABLE",
+            "reason": "the gap-fade study runs on INDEX / FUTURE only (docs/04 §4)",
+            "summaries": [],
+            "occurrences": [],
+        }
+
+    rows = db.execute(
+        select(m.OhlcvBar.ts, m.OhlcvBar.open, m.OhlcvBar.high, m.OhlcvBar.low, m.OhlcvBar.close)
+        .where(
+            m.OhlcvBar.instrument_id == instrument_id,
+            m.OhlcvBar.timeframe == Timeframe.D1,
+        )
+        .order_by(m.OhlcvBar.ts.asc())
+    ).all()
+    if not rows:
+        return {
+            **base,
+            "status": "INSUFFICIENT_DATA",
+            "reason": "no D1 bars ingested",
+            "summaries": [],
+            "occurrences": [],
+        }
+    dates = [trading_date_of(r.ts).isoformat() for r in rows]
+    opens = [float(r.open) for r in rows]
+    highs = [float(r.high) for r in rows]
+    lows = [float(r.low) for r in rows]
+    closes = [float(r.close) for r in rows]
+
+    result = scan_gap_fade_study(dates, opens, highs, lows, closes, params=params)
+    out = {**base, **_dc_asdict(result)}
+    for s in out.get("summaries") or []:
+        s["streak_day_histogram"] = {str(k): v for k, v in s["streak_day_histogram"].items()}
+    return out
+
+
+# ======================================================================================
+# Economic event calendar (docs/07 §4.27, docs/05 §9g)
+# ======================================================================================
+#
+# A small set of recurring-date event types (not live news, not a real
+# economic-calendar feed) with a before/after price read on the instrument
+# being viewed. US_JOBS_REPORT / US_JOBLESS_CLAIMS / INDIA_GST_COLLECTION /
+# MCX_*_EXPIRY / COMEX_*_EXPIRY are generated purely from calendar rules;
+# FNO_EXPIRY uses whatever expiry dates the tracked universe actually has
+# (current + next contract only — no historical backfill, the instruments
+# table doesn't retain expired contracts). Pure math in
+# analytical_core.event_calendar.scan_event_calendar; computed on read, not
+# persisted, not scored. INDEX + FUTURE only.
+
+# FOMC rate-decision dates — NOT a formula (committee-set), so this is a
+# manually-seeded, owner-extendable list, not a live feed (owner-authorised
+# 2026-09-16 — "fed rate decision not coming"). Populated from training
+# knowledge for 2023-2025 only, at moderate-not-certain confidence; NOT
+# independently verified against a live source. Add/correct entries here as
+# needed — cross-check against federalreserve.gov before relying on this for
+# anything beyond a rough historical read. Dates are the decision-announcement
+# day (2nd day of each 2-day FOMC meeting).
+_FOMC_RATE_DECISION_DATES: tuple[str, ...] = (
+    # 2023
+    "2023-02-01",
+    "2023-03-22",
+    "2023-05-03",
+    "2023-06-14",
+    "2023-07-26",
+    "2023-09-20",
+    "2023-11-01",
+    "2023-12-13",
+    # 2024
+    "2024-01-31",
+    "2024-03-20",
+    "2024-05-01",
+    "2024-06-12",
+    "2024-07-31",
+    "2024-09-18",
+    "2024-11-07",
+    "2024-12-18",
+    # 2025
+    "2025-01-29",
+    "2025-03-19",
+    "2025-05-07",
+    "2025-06-18",
+    "2025-07-30",
+    "2025-09-17",
+    "2025-10-29",
+    "2025-12-10",
+    # 2026 — owner-confirmed entries only (2026-09-17: "Fed rate decision
+    # yesterday but its not showing"); NOT from training-knowledge recall,
+    # since 2026 is at/past this model's knowledge cutoff. Add further 2026
+    # dates the same way — owner-confirmed, not guessed.
+    "2026-09-16",
+)
+
+# ECB Governing Council monetary-policy (rate) decision dates — same
+# treatment as FOMC above: committee-set, no formula, manually-seeded,
+# owner-extendable, not a live feed (owner-authorised 2026-09-17). Populated
+# from training knowledge for 2023-2025 only, at moderate-not-certain
+# confidence; NOT independently verified. Cross-check against ecb.europa.eu
+# before relying on this for anything beyond a rough historical read.
+_ECB_RATE_DECISION_DATES: tuple[str, ...] = (
+    # 2023
+    "2023-02-02",
+    "2023-03-16",
+    "2023-05-04",
+    "2023-06-15",
+    "2023-07-27",
+    "2023-09-14",
+    "2023-10-26",
+    "2023-12-14",
+    # 2024
+    "2024-01-25",
+    "2024-03-07",
+    "2024-04-11",
+    "2024-06-06",
+    "2024-07-18",
+    "2024-09-12",
+    "2024-10-17",
+    "2024-12-12",
+    # 2025
+    "2025-01-30",
+    "2025-03-06",
+    "2025-04-17",
+    "2025-06-05",
+    "2025-07-24",
+    "2025-09-11",
+    "2025-10-30",
+    "2025-12-18",
+)
+
+# RBI Monetary Policy Committee (MPC) rate-decision dates — same treatment as
+# FOMC/ECB above: committee-set, no formula, manually-seeded, owner-
+# extendable, not a live feed (owner-authorised 2026-09-17, from the
+# owner's "highest-priority events" list — RBI MPC flagged 🔴 very high).
+# Populated from training knowledge for 2023-2025 only (RBI MPC meets
+# bi-monthly, 6 times/year — fewer dates than Fed/ECB's 8), at
+# moderate-not-certain confidence; NOT independently verified. No 2026+
+# entries — same reasoning as Fed/ECB, past this model's knowledge cutoff.
+# Cross-check against rbi.org.in before relying on this for anything beyond
+# a rough historical read.
+_RBI_RATE_DECISION_DATES: tuple[str, ...] = (
+    # 2023
+    "2023-02-08",
+    "2023-04-06",
+    "2023-06-08",
+    "2023-08-10",
+    "2023-10-06",
+    "2023-12-08",
+    # 2024
+    "2024-02-08",
+    "2024-04-05",
+    "2024-06-07",
+    "2024-08-08",
+    "2024-10-09",
+    "2024-12-06",
+    # 2025
+    "2025-02-07",
+    "2025-04-09",
+    "2025-06-06",
+    "2025-08-06",
+    "2025-10-01",
+    "2025-12-05",
+)
+
+
+def event_calendar(db: Session, instrument_id: int, **overrides):
+    """Recurring economic-event calendar + before/after price read (docs/05
+    §9g). Returns ``None`` on an unknown id."""
+    from analytical_core.enums import InstrumentType
+    from analytical_core.event_calendar import EVENT_CALENDAR_VERSION, scan_event_calendar
+    from app.ingestion.session import trading_date_of
+
+    inst = get_instrument(db, instrument_id)
+    if inst is None:
+        return None
+
+    params = {k: v for k, v in overrides.items() if v is not None}
+    base = {
+        "instrument_id": instrument_id,
+        "contract_key": inst.contract_key,
+        "instrument_type": inst.instrument_type.value,
+        "generated_at": datetime.now(tz=_utc()).isoformat(),
+        "notable_move_pct": float(params.get("notable_move_pct", 0.5)),
+        "event_calendar_version": EVENT_CALENDAR_VERSION,
+    }
+    if inst.instrument_type not in (InstrumentType.INDEX, InstrumentType.FUTURE):
+        return {
+            **base,
+            "status": "NOT_APPLICABLE",
+            "reason": "the event calendar runs on INDEX / FUTURE only (docs/04 §4)",
+            "summaries": [],
+            "occurrences": [],
+        }
+
+    rows = db.execute(
+        select(m.OhlcvBar.ts, m.OhlcvBar.close)
+        .where(
+            m.OhlcvBar.instrument_id == instrument_id,
+            m.OhlcvBar.timeframe == Timeframe.D1,
+        )
+        .order_by(m.OhlcvBar.ts.asc())
+    ).all()
+    if not rows:
+        return {
+            **base,
+            "status": "INSUFFICIENT_DATA",
+            "reason": "no D1 bars ingested",
+            "summaries": [],
+            "occurrences": [],
+        }
+    dates = [trading_date_of(r.ts).isoformat() for r in rows]
+    closes = [float(r.close) for r in rows]
+
+    underlying = inst.contract_key.split("-")[0]
+    expiry_rows = db.execute(
+        select(m.Instrument.expiry_date)
+        .where(
+            m.Instrument.contract_key.like(f"{underlying}-FUT-%"),
+            m.Instrument.expiry_date.is_not(None),
+        )
+        .distinct()
+    ).all()
+    fno_expiry_dates = sorted({r.expiry_date.isoformat() for r in expiry_rows})
+
+    result = scan_event_calendar(
+        dates,
+        closes,
+        fno_expiry_dates=fno_expiry_dates,
+        fomc_dates=_FOMC_RATE_DECISION_DATES,
+        ecb_dates=_ECB_RATE_DECISION_DATES,
+        rbi_dates=_RBI_RATE_DECISION_DATES,
+        params=params,
+    )
+    return {**base, **_dc_asdict(result)}
+
+
+# ======================================================================================
 # Multi-timeframe candle-pattern grid (docs/07 §4.17, docs/05 §9b)
 # ======================================================================================
 #
@@ -2655,9 +3350,17 @@ def candles_grid(db: Session, instrument_id: int, *, limit: int = 5):
 # `near_fast` / `near_slow` when within `golden_cross.near_ma_pct` (default
 # 0.3%) — the "200 MA acting as support/resistance" alert.
 
-_GC_GRID_VERSION = "0.2.0"  # 0.2.0: price-vs-MA proximity (support/resistance read, 2026-09-15)
+_GC_GRID_VERSION = "0.3.1"  # 0.3.1: wider load window so EMA(200) actually converges (2026-09-16)
 _GC_GRID_TIMEFRAMES = ("M5", "M15", "H1", "D1")
-_GC_GRID_LOAD = 280  # ≥ slow_period (200) + the cross-search window + headroom
+# The SMA-based cross only needs its own trailing slow_period (200) bars, but the
+# EMA read is a recursive average that keeps a (decaying) memory of everything
+# before the window — seeded from just ~280 bars (80 past the SMA seed) it lands
+# far from what a broker/charting platform's full-history EMA(200) shows (owner-
+# flagged 2026-09-16: "200 EMA showin 24300 around but in our analytical showin
+# 24453 ? D1"). 1500 bars gets EMA(200)'s exponential weight (k=2/201) to >99.99%
+# converged — (1-k)^1500 ≈ 6e-7 — while staying cheap (all 4 timeframes have far
+# more history than this).
+_GC_GRID_LOAD = 1500
 
 
 def _gc_ma_proximity(
@@ -2722,6 +3425,8 @@ def _gc_grid_column(tf: str, bars: list, instrument_type, near_pct: float) -> di
         "near_slow": False,
         "nearest_ma": None,
         "nearest_ma_side": None,
+        "ema_fast": None,
+        "ema_slow": None,
     }
     if not bars:
         col["reason"] = "no bars ingested for this timeframe"
@@ -2757,6 +3462,14 @@ def _gc_grid_column(tf: str, bars: list, instrument_type, near_pct: float) -> di
         col.update(_gc_ma_proximity(float(bars[-1].close), v["fast"], v["slow"], near_pct))
     else:
         col["reason"] = v.get("reason")
+
+    # same fast/slow periods, EMA instead of the configured ma_type — one extra
+    # read alongside the DMA cross, not a second cross-state (owner-authorised
+    # 2026-09-16 — "DMA 50 200 like need EMA one box")
+    res_ema = golden_cross(series, instrument_type=instrument_type, overrides={"ma_type": "EMA"})
+    if res_ema.status.value == "OK":
+        col["ema_fast"] = res_ema.values["fast"]
+        col["ema_slow"] = res_ema.values["slow"]
     return col
 
 
@@ -2958,6 +3671,148 @@ def fvg_grid(db: Session, instrument_id: int):
         "generated_at": datetime.now(tz=_utc()).isoformat(),
         "columns": columns,
         "fvg_grid_version": FVG_VERSION,
+    }
+
+
+# ======================================================================================
+# Candle Range Theory — one row per timeframe (docs/07 §4.24, docs/05 §9d)
+# ======================================================================================
+#
+# A reference candle's High-Low range, and how the bars since it have behaved
+# around it: current position (above/below/inside/at midpoint), first breakout
+# direction, whether it held / got rejected / retested, range expansion beyond
+# the break, and whether the reference candle itself was a compression
+# ("inside"/"mother") candle. 5m / 15m / 30m / 1h columns (M30 folded from M5
+# on read). The pure scan is `analytical_core.crt.scan_crt`. Computed on read,
+# not persisted, not scored. Descriptive — no BUY/SELL, no target/stop.
+
+_CRT_GRID_TIMEFRAMES = ("M5", "M15", "M30", "H1")
+_CRT_GRID_LOAD = 40  # scan_bars (5) + mother bar + headroom
+
+
+def _crt_dc(r) -> dict | None:
+    if r is None:
+        return None
+    return {
+        "reference_ts": r.reference_ts,
+        "ref_high": r.ref_high,
+        "ref_low": r.ref_low,
+        "ref_range": r.ref_range,
+        "ref_midpoint": r.ref_midpoint,
+        "is_inside_candle": r.is_inside_candle,
+        "mother_high": r.mother_high,
+        "mother_low": r.mother_low,
+        "last_ts": r.last_ts,
+        "last_close": r.last_close,
+        "current_position": r.current_position,
+        "breakout_direction": r.breakout_direction,
+        "breakout_ts": r.breakout_ts,
+        "close_outside": r.close_outside,
+        "returned_inside": r.returned_inside,
+        "retested": r.retested,
+        "holds_beyond": r.holds_beyond,
+        "expansion_points": r.expansion_points,
+        "expansion_multiple": r.expansion_multiple,
+        "volume_confirms": r.volume_confirms,
+        "signal": r.signal,
+        "bars_scanned": r.bars_scanned,
+    }
+
+
+def _crt_grid_column(tf: str, bars: list) -> dict:
+    from analytical_core.crt import scan_crt
+
+    col: dict[str, Any] = {
+        "timeframe": tf,
+        "status": "INSUFFICIENT_DATA",
+        "as_of_ts": None,
+        "reason": None,
+        "read": None,
+    }
+    if len(bars) < 8:
+        col["reason"] = "no bars ingested for this timeframe"
+        return col
+    read = scan_crt(
+        [b.high for b in bars],
+        [b.low for b in bars],
+        [b.close for b in bars],
+        volumes=[b.volume for b in bars],
+        ts=[b.ts.astimezone(_utc()).isoformat() for b in bars],
+    )
+    if read is None:
+        col["reason"] = "not enough bars for the configured scan window"
+        return col
+    col["status"] = "OK"
+    col["as_of_ts"] = bars[-1].ts.astimezone(_utc()).isoformat()
+    col["read"] = _crt_dc(read)
+    return col
+
+
+def crt_grid(db: Session, instrument_id: int):
+    """Candle Range Theory for 5m / 15m / 30m / 1h (docs/05 §9d). Pure scan in
+    ``analytical_core.crt``, computed on read, not persisted, not scored.
+    INDEX + FUTURE only. Returns ``None`` on an unknown id."""
+    from analytical_core.crt import CRT_VERSION
+    from analytical_core.enums import InstrumentType, Timeframe
+
+    inst = get_instrument(db, instrument_id)
+    if inst is None:
+        return None
+    applicable = inst.instrument_type in (InstrumentType.INDEX, InstrumentType.FUTURE)
+
+    def _load(tf: Timeframe) -> list[_GBar]:
+        rows = db.execute(
+            select(
+                m.OhlcvBar.ts,
+                m.OhlcvBar.open,
+                m.OhlcvBar.high,
+                m.OhlcvBar.low,
+                m.OhlcvBar.close,
+                m.OhlcvBar.volume,
+                m.OhlcvBar.is_final,
+            )
+            .where(
+                m.OhlcvBar.instrument_id == instrument_id,
+                m.OhlcvBar.timeframe == tf,
+            )
+            .order_by(m.OhlcvBar.ts.desc())
+            .limit(_CRT_GRID_LOAD)
+        ).all()
+        return [
+            _GBar(
+                ts=r.ts,
+                open=float(r.open),
+                high=float(r.high),
+                low=float(r.low),
+                close=float(r.close),
+                volume=int(r.volume),
+                is_final=bool(r.is_final),
+            )
+            for r in reversed(rows)
+        ]
+
+    m5 = _load(Timeframe.M5) if applicable else []
+    columns: list[dict] = []
+    for tf in _CRT_GRID_TIMEFRAMES:
+        if not applicable:
+            columns.append(
+                {
+                    **_crt_grid_column(tf, []),
+                    "status": "NOT_APPLICABLE",
+                    "reason": "Candle Range Theory runs on INDEX / FUTURE only (docs/04 §4)",
+                }
+            )
+            continue
+        bars = m5 if tf == "M5" else _fold_m5_to_m30(m5) if tf == "M30" else _load(Timeframe(tf))
+        columns.append(_crt_grid_column(tf, bars))
+
+    return {
+        "instrument_id": instrument_id,
+        "contract_key": inst.contract_key,
+        "instrument_type": inst.instrument_type.value,
+        "generated_at": datetime.now(tz=_utc()).isoformat(),
+        "columns": columns,
+        "crt_grid_version": CRT_VERSION,
     }
 
 

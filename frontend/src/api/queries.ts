@@ -42,12 +42,18 @@ import type {
   ConstituentLevelsResponse,
   OiPulseResponse,
   OiMoversResponse,
+  OiMoverLtpTraceResponse,
+  OiLadderResponse,
   PremiumDecayResponse,
   DailyDigestResponse,
   KeyLevelsResponse,
   CandlesGridResponse,
   GoldenCrossGridResponse,
   FvgGridResponse,
+  CrtGridResponse,
+  GannCyclesResponse,
+  GapFadeStudyResponse,
+  EventCalendarResponse,
   PivotsResponse,
   DailyDigestParams,
   Page,
@@ -424,6 +430,54 @@ export const useOiMovers = (
     retry: false,
   });
 
+// -- one strike's session LTP next to the underlying's LTP (docs/05 §11.4) --
+export const useOiMoverLtpTrace = (
+  underlyingId: number,
+  strike: number | null,
+  optionType: "CE" | "PE" | null,
+) =>
+  useQuery({
+    queryKey: ["oi-mover-ltp-trace", underlyingId, strike, optionType] as const,
+    queryFn: () => {
+      const qs = new URLSearchParams({ strike: String(strike), option_type: String(optionType) });
+      return api.get<OiMoverLtpTraceResponse>(
+        `/instruments/${underlyingId}/oi-movers/ltp-trace?${qs}`,
+      );
+    },
+    enabled: strike != null && optionType != null,
+    refetchInterval: () => (istSessionWindow() ? 45_000 : false),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+// -- strike-by-time CE|strike|PE OI-change ladder (docs/05 §11.4) --
+export const useOiLadder = (
+  underlyingId: number,
+  opts: { marks?: number; stepMin?: number; windowUp?: number; windowDown?: number } = {},
+) =>
+  useQuery({
+    queryKey: [
+      "oi-ladder",
+      underlyingId,
+      opts.marks ?? 3,
+      opts.stepMin ?? 1,
+      opts.windowUp ?? 6,
+      opts.windowDown ?? 6,
+    ] as const,
+    queryFn: () => {
+      const qs = new URLSearchParams({
+        marks: String(opts.marks ?? 3),
+        step_min: String(opts.stepMin ?? 1),
+        window_up: String(opts.windowUp ?? 6),
+        window_down: String(opts.windowDown ?? 6),
+      });
+      return api.get<OiLadderResponse>(`/instruments/${underlyingId}/oi-ladder?${qs}`);
+    },
+    refetchInterval: () => (istSessionWindow() ? 45_000 : false),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
 // -- premium decay: theta vs. the session's actual move (docs/05 §11.6) --
 export const usePremiumDecay = (underlyingId: number, opts: { expiry?: string } = {}) =>
   useQuery({
@@ -487,6 +541,53 @@ export const useFvgGrid = (instrumentId: number) =>
   useQuery({
     queryKey: ["fvg-grid", instrumentId] as const,
     queryFn: () => api.get<FvgGridResponse>(`/instruments/${instrumentId}/fvg-grid`),
+    refetchInterval: () => (istSessionWindow() ? 60_000 : false),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+// -- Gann time cycles (docs/05 §9e) — D1-derived, no intraday refetch -----
+export const useGannCycles = (instrumentId: number) =>
+  useQuery({
+    queryKey: ["gann-cycles", instrumentId] as const,
+    queryFn: () => api.get<GannCyclesResponse>(`/instruments/${instrumentId}/gann-cycles`),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+// -- Gap-fade streak study (docs/05 §9f) — full history, no intraday refetch --
+export type GapFadeStudyParams = {
+  gap_up_min_pct?: number;
+  chg_down_max_pct?: number;
+  gap_down_max_pct?: number;
+  chg_up_min_pct?: number;
+  box_days?: number;
+  breakout_buffer_pct?: number;
+  max_breakout_search_days?: number;
+};
+export const useGapFadeStudy = (instrumentId: number, params: GapFadeStudyParams = {}) =>
+  useQuery({
+    queryKey: ["gap-fade-study", instrumentId, params] as const,
+    queryFn: () =>
+      api.get<GapFadeStudyResponse>(`/instruments/${instrumentId}/gap-fade-study`, { ...params }),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+// -- Economic event calendar (docs/05 §9g) — full history, no intraday refetch --
+export const useEventCalendar = (instrumentId: number) =>
+  useQuery({
+    queryKey: ["event-calendar", instrumentId] as const,
+    queryFn: () => api.get<EventCalendarResponse>(`/instruments/${instrumentId}/event-calendar`),
+    placeholderData: (prev) => prev,
+    retry: false,
+  });
+
+// -- Candle Range Theory per timeframe (docs/05 §9d) -----
+export const useCrtGrid = (instrumentId: number) =>
+  useQuery({
+    queryKey: ["crt-grid", instrumentId] as const,
+    queryFn: () => api.get<CrtGridResponse>(`/instruments/${instrumentId}/crt-grid`),
     refetchInterval: () => (istSessionWindow() ? 60_000 : false),
     placeholderData: (prev) => prev,
     retry: false,

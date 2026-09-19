@@ -28,6 +28,10 @@ import { KeyLevelsPanel } from "./KeyLevelsPanel";
 import { CandlesGridPanel } from "./CandlesGridPanel";
 import { GoldenCrossGridPanel } from "./GoldenCrossGridPanel";
 import { FvgGridPanel } from "./FvgGridPanel";
+import { CrtGridPanel } from "./CrtGridPanel";
+import { GannCyclesPanel } from "./GannCyclesPanel";
+import { GapFadeStudyPanel } from "./GapFadeStudyPanel";
+import { EventCalendarPanel } from "./EventCalendarPanel";
 import { PivotsPanel } from "./PivotsPanel";
 
 export function InstrumentDetail() {
@@ -207,6 +211,14 @@ export function InstrumentDetail() {
       {d.instrument_type !== "OPTION" && <GoldenCrossGridPanel instrumentId={id} />}
 
       {d.instrument_type !== "OPTION" && <FvgGridPanel instrumentId={id} />}
+
+      {d.instrument_type !== "OPTION" && <CrtGridPanel instrumentId={id} />}
+
+      {d.instrument_type !== "OPTION" && <GannCyclesPanel instrumentId={id} />}
+
+      {d.instrument_type !== "OPTION" && <GapFadeStudyPanel instrumentId={id} />}
+
+      {d.instrument_type !== "OPTION" && <EventCalendarPanel instrumentId={id} />}
 
       {mpQ.data && <MarketProfilePanel mp={mpQ.data} instrumentId={id} />}
       {!mpQ.data && mpItem && (

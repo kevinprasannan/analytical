@@ -128,7 +128,7 @@ def market_profile(
     got = services.market_profile_view(db, instrument_id, sd, profile_type)
     if got is None:
         raise not_found(f"market profile for {sd}")
-    rows, close_vals = got
+    rows, close_vals, volume_source, volume_source_contract_key = got
     tpo = next((r for r in rows if r.profile_type.value == "TPO"), rows[0])
     return MarketProfileResponse(
         instrument_id=instrument_id,
@@ -152,6 +152,8 @@ def market_profile(
             r.profile_type.value: ProfileBins(bins=(r.bins or {}).get("bins", [])) for r in rows
         },
         events=MPEventsBlock.model_validate(tpo.events) if tpo.events else None,
+        volume_source=volume_source,
+        volume_source_contract_key=volume_source_contract_key,
     )
 
 

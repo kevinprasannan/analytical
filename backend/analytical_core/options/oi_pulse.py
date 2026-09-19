@@ -120,6 +120,59 @@ class OiTracePoint:
 
 
 @dataclass(frozen=True, slots=True)
+class LtpTracePoint:
+    """One tick of a single strike's premium next to the underlying's LTP —
+    and that strike's own OI — at that same instant. The raw trio a trader
+    watches to see where a crowded strike's OI build tracks (or diverges
+    from) its premium and the underlying, looking for where stop-losses /
+    liquidity might sit. No indicator, no label."""
+
+    ts: str  # ISO
+    option_ltp: float
+    underlying_ltp: float | None  # None only when the underlying series is empty
+    oi: int | None = None  # None only when the OI series is empty (no sample yet)
+    oi_change: int | None = None  # oi - oi at the first sample in the passed-in oi_series
+
+
+@dataclass(frozen=True, slots=True)
+class OiLadderCell:
+    """One (strike, side, mark) cell — the raw OI at that mark, its change
+    from the mark right before it (``None`` on the ladder's first mark, or
+    when that strike/side has no OI sample at/before this mark), and that
+    option's own premium (LTP) at the same mark for hover context (owner:
+    "add option price also" — ``None`` when no premium series was supplied,
+    same as a leg with no OI sample)."""
+
+    oi: int | None
+    oi_delta: int | None
+    ltp: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OiLadderRow:
+    strike: float
+    call: tuple[OiLadderCell, ...]  # one per mark, ascending — same length as `marks`
+    put: tuple[OiLadderCell, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OiLadder:
+    """A classic option-chain-shaped **CE | strike | PE** ladder, but each
+    column is a recent time mark instead of a single "now" snapshot, and
+    each cell is the OI **change since the previous column** — a strike-by-
+    time view of where OI is moving, not just how much moved cumulatively
+    (owner: "OI Delta only that time change only ... like this one more
+    display option in LTP Trace"/oi movers). Distinct from
+    ``OiPulse.trace``, which aggregates every strike into one number per
+    side per mark; this keeps every strike its own row."""
+
+    marks: tuple[str, ...]  # ISO, ascending
+    atm_strike: float | None
+    rows: tuple[OiLadderRow, ...]  # strike ascending
+    underlying_at_marks: tuple[float | None, ...] = ()  # same length/order as `marks`
+
+
+@dataclass(frozen=True, slots=True)
 class OiPulse:
     underlying_symbol: str
     spot: float
@@ -464,6 +517,110 @@ def _build_trace(
         )
         prev_ce_chg, prev_pe_chg, prev_diff = ce_chg, pe_chg, diff
     return tuple(out)
+
+
+def build_ltp_trace(
+    option_premium: tuple[tuple[datetime, float], ...],
+    spot_series: tuple[tuple[datetime, float], ...],
+    oi_series: tuple[tuple[datetime, int], ...] = (),
+) -> tuple[LtpTracePoint, ...]:
+    """One point per ``option_premium`` sample: that tick's option LTP next to
+    the underlying's LTP and that strike's own OI (+ its change since
+    ``oi_series``'s own first sample), each at/just-before the same instant.
+    Ascending, one row per tick already present in ``option_premium`` — no
+    resampling, no gaps filled. Empty if ``option_premium`` is empty.
+
+    ``oi_change`` is deliberately relative to ``oi_series[0]``, not a
+    session-open lookup of its own — callers already pass an ``oi_series``
+    pre-filtered to the session (same convention as ``option_premium`` /
+    ``spot_series``), so its first sample *is* the session's opening read.
+    """
+    oi_open = oi_series[0][1] if oi_series else None
+    out = []
+    for ts, px in option_premium:
+        u = _at_or_before(spot_series, ts)
+        o = _at_or_before(oi_series, ts)
+        out.append(
+            LtpTracePoint(
+                ts=ts.isoformat(),
+                option_ltp=round(px, 4),
+                underlying_ltp=round(u, 4) if u is not None else None,
+                oi=int(o) if o is not None else None,
+                oi_change=(
+                    (int(o) - int(oi_open)) if (o is not None and oi_open is not None) else None
+                ),
+            )
+        )
+    return tuple(out)
+
+
+def build_oi_ladder(
+    legs: list[OiLegSeries],
+    marks: tuple[datetime, ...],
+    spot: float,
+    *,
+    window_up: int | None = None,
+    window_down: int | None = None,
+    underlying_series: tuple[tuple[datetime, float], ...] = (),
+) -> OiLadder:
+    """Per-strike CE/PE OI at each of ``marks`` (ascending), each cell also
+    carrying its change from the mark before it and, when the leg's
+    ``premium`` was supplied, that option's own LTP at the same mark (owner:
+    "add option price also" — ``None`` when no premium series was given).
+    ``window_up``/``window_down`` optionally restrict the rows to N strikes
+    above/below ATM (same strike-step-inference convention as
+    ``build_oi_pulse``'s own ``trace_window_up``/``trace_window_down`` —
+    ``None`` either side means no limit that way). ``underlying_series``
+    (optional) resolves the underlying's own LTP at/just-before each mark,
+    via the same ``_at_or_before`` lookup used everywhere else in this
+    module — for the ladder's cells to disclose "what was the underlying
+    doing at that instant" on hover, without a chart (owner: "mouse hover
+    can we show price"). Empty ``rows`` if ``legs`` or ``marks`` is empty."""
+    strikes = sorted({lg.strike for lg in legs})
+    atm = min(strikes, key=lambda s: abs(s - spot)) if strikes else None
+
+    kept = strikes
+    if (window_up is not None or window_down is not None) and atm is not None and strikes:
+        gaps = sorted(
+            {round(b - a, 6) for a, b in zip(strikes, strikes[1:], strict=False) if b > a}
+        )
+        step = gaps[0] if gaps else 0.0
+        if step > 0.0:
+            hi = atm + window_up * step + step * 0.5 if window_up is not None else None
+            lo = atm - window_down * step - step * 0.5 if window_down is not None else None
+            kept = [s for s in strikes if (hi is None or s <= hi) and (lo is None or s >= lo)]
+
+    by_strike_side = {(lg.strike, lg.option_type): lg for lg in legs}
+
+    def _cells(strike: float, side: str) -> tuple[OiLadderCell, ...]:
+        lg = by_strike_side.get((strike, side))
+        if lg is None or not marks:
+            return tuple(OiLadderCell(oi=None, oi_delta=None, ltp=None) for _ in marks)
+        cells: list[OiLadderCell] = []
+        prev: int | None = None
+        for mk in marks:
+            v = _at_or_before(lg.oi, mk)
+            oi = int(v) if v is not None else None
+            delta = (oi - prev) if (oi is not None and prev is not None) else None
+            px = _at_or_before(lg.premium, mk)
+            cells.append(
+                OiLadderCell(oi=oi, oi_delta=delta, ltp=round(px, 4) if px is not None else None)
+            )
+            if oi is not None:
+                prev = oi
+        return tuple(cells)
+
+    rows = tuple(OiLadderRow(strike=s, call=_cells(s, _CE), put=_cells(s, _PE)) for s in kept)
+    underlying_at_marks = tuple(
+        round(u, 4) if (u := _at_or_before(underlying_series, mk)) is not None else None
+        for mk in marks
+    )
+    return OiLadder(
+        marks=tuple(mk.isoformat() for mk in marks),
+        atm_strike=atm,
+        rows=rows,
+        underlying_at_marks=underlying_at_marks,
+    )
 
 
 # ----------------------------------------------------------------------------- serialise

@@ -30,6 +30,51 @@ class OiMover(BaseModel):
     crowded: bool = False
 
 
+class LtpTracePoint(BaseModel):
+    ts: str
+    option_ltp: float
+    underlying_ltp: float | None = None
+    oi: int | None = None
+    oi_change: int | None = None  # oi - oi at the first sample of this session's series
+
+
+class OiMoverLtpTraceResponse(BaseModel):
+    underlying_id: int
+    underlying_symbol: str
+    option_instrument_id: int
+    strike: float
+    option_type: str  # CE | PE
+    expiry: str
+    as_of: str
+    session_open: str
+    series: list[LtpTracePoint] = Field(default_factory=list)
+
+
+class OiLadderCell(BaseModel):
+    oi: int | None = None
+    oi_delta: int | None = None  # vs. the column before it; None on the first column
+    ltp: float | None = None  # that option's own premium at this mark
+
+
+class OiLadderRow(BaseModel):
+    strike: float
+    call: list[OiLadderCell] = Field(default_factory=list)  # one per `marks` entry
+    put: list[OiLadderCell] = Field(default_factory=list)
+
+
+class OiLadderResponse(BaseModel):
+    underlying_id: int
+    underlying_symbol: str
+    spot: float
+    expiry: str
+    as_of: str
+    step_min: int  # minutes between columns
+    marks: list[str] = Field(default_factory=list)  # ISO, ascending — column headers
+    atm_strike: float | None = None
+    underlying_at_marks: list[float | None] = Field(default_factory=list)  # same order as `marks`
+    rows: list[OiLadderRow] = Field(default_factory=list)  # strike ascending
+
+
 class OiMoversResponse(BaseModel):
     underlying_id: int
     underlying_symbol: str

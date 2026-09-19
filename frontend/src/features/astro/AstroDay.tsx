@@ -125,9 +125,34 @@ type LordHouse = { deg: number | null; dg: string | null; whole: number | null; 
  *  three bulk shortcuts (collapse all / MD+AD / MD+AD+PD). */
 const CUTOFF_OPTS = ["15:30", "15:40", "full"] as const;
 
-function MoonDashaBasis({ md, positions }: { md: MoonDasha; positions: DayPlanet[] }) {
+function MoonDashaBasis({
+  md,
+  positions,
+  bars,
+}: {
+  md: MoonDasha;
+  positions: DayPlanet[];
+  bars: DayHourBar[];
+}) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(md.periods.map(periodKey)));
   const [cutoff, setCutoff] = useState<(typeof CUTOFF_OPTS)[number]>("15:40");
+
+  // price path re-based to this dasha's own session_open, for a per-period % move
+  const pricePts = bars
+    .filter((b) => b.open != null)
+    .map((b) => ({
+      m: istMinsFrom(b.ts, md.session_open),
+      o: b.open as number,
+      c: (b.close ?? b.open) as number,
+    }))
+    .sort((a, b) => a.m - b.m);
+  const movePct = (a: number, b: number): number | null => {
+    const seg = pricePts.filter((p) => p.m >= a - 1e-6 && p.m <= b + 1e-6);
+    if (seg.length < 1) return null;
+    const first = seg[0].o;
+    const last = seg[seg.length - 1].c;
+    return first ? ((last - first) / first) * 100 : null;
+  };
 
   const toggle = (p: MoonDashaPeriod) =>
     setExpanded((s) => {
@@ -251,6 +276,9 @@ function MoonDashaBasis({ md, positions }: { md: MoonDasha; positions: DayPlanet
               </th>
               <th className="px-2 py-1 text-right">duration</th>
               <th className="px-2 py-1 text-right">= years</th>
+              <th className="px-2 py-1 text-right" title="index open→close move over this period's own window">
+                % chg
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -291,6 +319,9 @@ function MoonDashaBasis({ md, positions }: { md: MoonDasha; positions: DayPlanet
                 <td className="px-2 py-1 text-right">{lagnaCell(p.lord)}</td>
                 <td className="px-2 py-1 text-right">{p.hms}</td>
                 <td className="px-2 py-1 text-right text-slate-400">{p.years_label}</td>
+                <td className="px-2 py-1 text-right">
+                  <Move v={movePct(p.start_min, p.end_min)} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -554,10 +585,12 @@ function MoonDashaPanel({
   date,
   underlying,
   positions,
+  bars,
 }: {
   date: string;
   underlying: string;
   positions: DayPlanet[];
+  bars: DayHourBar[];
 }) {
   const [open, setOpen] = useState<(typeof OPEN_OPTS)[number]>("09:15");
   const [minutes, setMinutes] = useState<(typeof MIN_OPTS)[number]>(390);
@@ -606,14 +639,16 @@ function MoonDashaPanel({
         120-year cycle, anchored at <b>{open} IST</b>. The first mahadasha is cut to its balance;
         full periods follow in Ketu→Venus→Sun→… order, wrapping to tile the session. The{" "}
         <b>lagna °/w</b> column is that period lord's house from the ascendant — by exact degree
-        (equal 30° houses on the lagna point), then whole-sign. Not the abstract start-lord grid on
-        the Astro screen, and not a different dasha school.
+        (equal 30° houses on the lagna point), then whole-sign. <b>% chg</b> is the index's
+        open→close move over that period's own window (M5 bars re-based to this dasha's own{" "}
+        {open} IST open — {DASH} where no bar falls inside a short period). Not the abstract
+        start-lord grid on the Astro screen, and not a different dasha school.
       </p>
       {q.isLoading && !md && <Skeleton rows={8} />}
       {q.error && !md && (
         <p className="text-sm text-slate-500">{DASH} no Moon position stored for this date.</p>
       )}
-      {md && <MoonDashaBasis md={md} positions={positions} />}
+      {md && <MoonDashaBasis md={md} positions={positions} bars={bars} />}
     </Panel>
   );
 }
@@ -646,6 +681,22 @@ function istMinsFromOpen(iso: string): number {
   const h = Number(p.find((x) => x.type === "hour")?.value ?? 0);
   const m = Number(p.find((x) => x.type === "minute")?.value ?? 0);
   return h * 60 + m - (9 * 60 + 15);
+}
+
+/** minutes since a given "HH:MM" IST session open — same clock read as
+ *  istMinsFromOpen, but against a caller-chosen open (MoonDashaPanel lets the
+ *  owner pick 09:00 vs 09:15, independent of the fixed-09:15 astro plot). */
+function istMinsFrom(iso: string, sessionOpen: string): number {
+  const p = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = Number(p.find((x) => x.type === "hour")?.value ?? 0);
+  const m = Number(p.find((x) => x.type === "minute")?.value ?? 0);
+  const [oh, om] = sessionOpen.split(":").map(Number);
+  return h * 60 + m - (oh * 60 + om);
 }
 
 const clockAt = (minsFromOpen: number) => {
@@ -1595,6 +1646,7 @@ export function AstroDay() {
               date={date}
               underlying={underlying}
               positions={d.astro.positions}
+              bars={d.market.m5}
             />
           )}
 
